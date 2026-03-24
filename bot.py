@@ -58,6 +58,7 @@ async def _handle(
             return
 
         # Scalp loop
+        peak_pnl = 0.0
         while True:
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
 
@@ -67,10 +68,20 @@ async def _handle(
 
             pnl     = trade.pnl_pct(value)
             elapsed = trade.elapsed()
-            print(f"[bot] {symbol} | P&L {pnl:+.1f}% | held {elapsed:.0f}s")
+            peak_pnl = max(peak_pnl, pnl)
+            print(f"[bot] {symbol} | P&L {pnl:+.1f}% | peak {peak_pnl:+.1f}% | held {elapsed:.0f}s")
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
+                if config.PARK_PROFITS and sol_back > trade.sol_spent:
+                    profit = sol_back - trade.sol_spent
+                    if config.PARK_AS_USDC:
+                        await trader.park_profit_in_usdc(session, rpc, keypair, profit)
+                    else:
+                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL (no extra swap)")
+                break
+            elif peak_pnl >= config.TRAIL_ACTIVATE_PCT and pnl <= peak_pnl - config.TRAIL_DRAWDOWN_PCT:
+                sol_back = await trader.sell(session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)")
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     profit = sol_back - trade.sol_spent
                     if config.PARK_AS_USDC:
@@ -112,7 +123,8 @@ async def main(dry_run: bool) -> None:
 
     print("[bot] v3 STARTING", flush=True)
     print(
-        f"[bot] BC momentum: +{config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}pts/{config.MOMENTUM_WINDOW_SEC}s",
+        f"[bot] BC momentum: +{config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}pts/{config.MOMENTUM_WINDOW_SEC}s "
+        f"| stop {config.STOP_LOSS_PCT}% | trail activates @+{config.TRAIL_ACTIVATE_PCT}%",
         flush=True,
     )
 
