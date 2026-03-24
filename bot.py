@@ -62,7 +62,10 @@ async def _handle(
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     profit = sol_back - trade.sol_spent
-                    await trader.park_profit_in_usdc(session, rpc, keypair, profit)
+                    if config.PARK_AS_USDC:
+                        await trader.park_profit_in_usdc(session, rpc, keypair, profit)
+                    else:
+                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL (no extra swap)")
                 break
             elif pnl <= -config.STOP_LOSS_PCT:
                 await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
@@ -71,7 +74,10 @@ async def _handle(
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     profit = sol_back - trade.sol_spent
-                    await trader.park_profit_in_usdc(session, rpc, keypair, profit)
+                    if config.PARK_AS_USDC:
+                        await trader.park_profit_in_usdc(session, rpc, keypair, profit)
+                    else:
+                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL (no extra swap)")
                 break
     finally:
         active.discard(mint)

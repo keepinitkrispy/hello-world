@@ -38,8 +38,11 @@ SOL_MINT  = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 # ── Profit parking ────────────────────────────────────────────────────────────
-# After a winning trade, sweep profit into USDC and only rebuy with principal
-PARK_PROFITS = True
+# After a winning trade, keep profit aside so it's never re-risked.
+# PARK_PROFITS=True  → hold profit as SOL (no extra swap, no extra gas)
+# PARK_AS_USDC=True  → additionally convert profit to USDC (costs one more tx)
+PARK_PROFITS  = True
+PARK_AS_USDC  = False  # set True only if you want hard USDC conversion
 
 # ── Coin filters ──────────────────────────────────────────────────────────────
 # Holder concentration: skip if top real holders (excl. bonding curve) own > this %
