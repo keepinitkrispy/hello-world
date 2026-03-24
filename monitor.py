@@ -43,14 +43,19 @@ async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
         async with session.get(
             PUMPFUN_API,
             params=params,
-            timeout=aiohttp.ClientTimeout(total=5),
+            timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
-                print(f"[monitor] API returned {resp.status}")
+                body = await resp.text()
+                print(f"[monitor] API {resp.status}: {body[:200]}", flush=True)
                 return []
-            data = await resp.json()
+            data = await resp.json(content_type=None)
+            if not isinstance(data, list):
+                print(f"[monitor] Unexpected response type: {type(data)} — {str(data)[:200]}", flush=True)
+                return []
+            print(f"[monitor] API ok — {len(data)} coins raw", flush=True)
     except Exception as e:
-        print(f"[monitor] Fetch error: {e}")
+        print(f"[monitor] Fetch error: {type(e).__name__}: {e}", flush=True)
         return []
 
     results = []
@@ -91,7 +96,7 @@ def _record_and_check(coin: dict) -> tuple[bool, float]:
     return False, rise
 
 
-async def run(queue: asyncio.Queue, seen_mints: set) -> None:
+async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
     _tick = 0
     async with aiohttp.ClientSession() as session:
         while True:
@@ -99,10 +104,10 @@ async def run(queue: asyncio.Queue, seen_mints: set) -> None:
             _tick += 1
 
             if _tick % 20 == 1:
-                print(f"[monitor] tick {_tick} | {len(coins)} candidates")
+                print(f"[monitor] tick {_tick} | {len(coins)} candidates", flush=True)
                 if coins:
                     s = coins[0]
-                    print(f"[monitor] sample: {s.get('symbol')} bc={_bc_pct(s):.1f}%")
+                    print(f"[monitor] sample: {s.get('symbol')} bc={_bc_pct(s):.1f}%", flush=True)
 
             for coin in coins:
                 mint = coin.get("mint")
@@ -116,8 +121,19 @@ async def run(queue: asyncio.Queue, seen_mints: set) -> None:
                     symbol = coin.get("symbol", "???")
                     print(
                         f"[monitor] MOMENTUM {symbol} ({mint[:8]}…) "
-                        f"BC +{rise:.1f}pts in {config.MOMENTUM_WINDOW_SEC}s"
+                        f"BC +{rise:.1f}pts in {config.MOMENTUM_WINDOW_SEC}s",
+                        flush=True,
                     )
                     await queue.put(coin)
 
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
+
+
+async def run(queue: asyncio.Queue, seen_mints: set) -> None:
+    try:
+        await _run_inner(queue, seen_mints)
+    except Exception as exc:
+        import traceback
+        print(f"[monitor] FATAL: {exc}", flush=True)
+        traceback.print_exc()
+        raise
