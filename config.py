@@ -8,7 +8,11 @@ RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"
 KEYPAIR_PATH = "./keypair.json"
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
-BUY_AMOUNT_SOL = 0.03       # SOL to spend per trade entry (adjust to your balance)
+# Bot bets a % of spendable balance each trade so it compounds wins and
+# scales back after losses — you should never need to top it up.
+TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.30"))   # 30% of spendable per trade
+GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))  # always kept back for fees
+MIN_TRADE_SOL   = 0.01      # don't bother trading below this (fees would eat it)
 
 # ── pump.fun monitoring ───────────────────────────────────────────────────────
 BOND_THRESHOLD_MIN = 85     # Start watching at 85% bonding curve progress

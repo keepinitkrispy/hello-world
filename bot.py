@@ -39,10 +39,21 @@ async def _handle(
             return  # already logged by filters module
 
         if dry_run:
-            print(f"[bot] [DRY RUN] PASS {symbol} @ {pct:.1f}% bonding — would buy {config.BUY_AMOUNT_SOL} SOL")
+            print(f"[bot] [DRY RUN] PASS {symbol} @ {pct:.1f}% bonding")
             return
 
-        trade = await trader.buy(session, rpc, keypair, mint, symbol)
+        # Dynamic bet: % of spendable balance, always keeping gas reserve
+        bal_resp    = await rpc.get_balance(keypair.pubkey())
+        balance_sol = bal_resp.value / 1_000_000_000
+        spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
+        buy_amount  = round(spendable * config.TRADE_PCT, 6)
+
+        if buy_amount < config.MIN_TRADE_SOL:
+            print(f"[bot] Skipping {symbol} — spendable {spendable:.4f} SOL too low to trade")
+            return
+
+        print(f"[bot] Balance {balance_sol:.4f} SOL | spendable {spendable:.4f} | betting {buy_amount:.4f} SOL ({config.TRADE_PCT*100:.0f}%)")
+        trade = await trader.buy(session, rpc, keypair, mint, symbol, buy_amount)
         if trade is None:
             return
 
@@ -90,9 +101,10 @@ async def main(dry_run: bool) -> None:
         rpc          = AsyncClient(config.RPC_URL)
         balance_resp = await rpc.get_balance(kp.pubkey())
         balance_sol  = balance_resp.value / 1_000_000_000
-        print(f"[bot] Balance: {balance_sol:.4f} SOL")
-        if balance_sol < config.BUY_AMOUNT_SOL:
-            print(f"[bot] !! Need at least {config.BUY_AMOUNT_SOL} SOL — fund {kp.pubkey()} then restart")
+        spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
+        print(f"[bot] Balance: {balance_sol:.4f} SOL | gas reserve: {config.GAS_RESERVE_SOL} SOL | spendable: {spendable:.4f} SOL")
+        if spendable < config.MIN_TRADE_SOL:
+            print(f"[bot] !! Spendable balance too low — fund {kp.pubkey()} then restart")
             sys.exit(1)
     else:
         rpc = None

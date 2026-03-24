@@ -113,15 +113,16 @@ async def buy(
     keypair: Keypair,
     mint: str,
     symbol: str,
+    amount_sol: float,
 ) -> Optional[Trade]:
-    lamports = int(config.BUY_AMOUNT_SOL * LAMPORTS)
+    lamports = int(amount_sol * LAMPORTS)
     quote    = await _quote(session, config.SOL_MINT, mint, lamports)
     if not quote:
         print(f"[trader] No buy quote for {symbol}")
         return None
 
     token_out = int(quote.get("outAmount", 0))
-    print(f"[trader] Buying {symbol}: {config.BUY_AMOUNT_SOL} SOL → {token_out:,} tokens")
+    print(f"[trader] Buying {symbol}: {amount_sol:.4f} SOL → {token_out:,} tokens")
 
     sig = await _swap(session, rpc, keypair, quote)
     if not sig:
@@ -129,7 +130,7 @@ async def buy(
         return None
 
     print(f"[trader] Bought {symbol}: {sig}")
-    return Trade(mint, symbol, token_out, config.BUY_AMOUNT_SOL)
+    return Trade(mint, symbol, token_out, amount_sol)
 
 
 async def current_value_sol(
