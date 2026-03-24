@@ -8,7 +8,7 @@ RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"
 KEYPAIR_PATH = "./keypair.json"
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
-BUY_AMOUNT_SOL = 0.1        # SOL to spend per trade entry
+BUY_AMOUNT_SOL = 0.03       # SOL to spend per trade entry (adjust to your balance)
 
 # ── pump.fun monitoring ───────────────────────────────────────────────────────
 BOND_THRESHOLD_MIN = 85     # Start watching at 85% bonding curve progress
@@ -27,3 +27,22 @@ SLIPPAGE_BPS = 300          # 3% slippage tolerance
 
 # ── Token addresses ───────────────────────────────────────────────────────────
 SOL_MINT = "So11111111111111111111111111111111111111112"
+
+# ── Coin filters ──────────────────────────────────────────────────────────────
+# Holder concentration: skip if top real holders (excl. bonding curve) own > this %
+MAX_TOP_HOLDER_PCT   = 20   # no single wallet should hold more than 20%
+MAX_TOP5_COMBINED_PCT = 20  # top 5 real wallets combined shouldn't exceed 20%
+
+# Dev spam: skip if creator has launched this many coins before
+MAX_CREATOR_COINS    = 4
+
+# Organic trading: minimum social engagement (pump.fun reply count)
+MIN_REPLY_COUNT      = 3
+
+# Bonding curve velocity: skip if coin went from 0 → threshold in under N seconds
+# (too fast = coordinated bot buy-up)
+MIN_AGE_SECONDS      = 300  # coin must be at least 5 minutes old
+
+# Copy-coin: skip if name/symbol too similar to a known popular coin
+# (checked via fuzzy match against a built-in list)
+COPY_SIMILARITY_PCT  = 80   # Levenshtein similarity threshold (0-100)

@@ -1,36 +1,45 @@
+import base58
 import json
 import os
 
 from solders.keypair import Keypair
 
 
+def _parse_key(raw: str) -> Keypair:
+    """
+    Accept either:
+      - A JSON byte array: [12, 34, 56, ...]   (what we generate / Solana CLI)
+      - A base58 string                         (what Phantom exports)
+    """
+    raw = raw.strip()
+    if raw.startswith("["):
+        return Keypair.from_bytes(bytes(json.loads(raw)))
+    else:
+        return Keypair.from_bytes(base58.b58decode(raw))
+
+
 def load_or_create(keypair_path: str) -> Keypair:
     """
-    Priority order:
-      1. SOLANA_PRIVATE_KEY env var (JSON array of bytes) — used in cloud deployments
-      2. keypair.json file — used locally
-      3. Generate a new keypair and save to file (first-run only)
+    Priority:
+      1. SOLANA_PRIVATE_KEY env var (Railway / cloud) — accepts base58 or JSON array
+      2. keypair.json local file
+      3. Generate a brand-new wallet and print instructions
     """
-    # 1. Env var (Railway / cloud)
     env_key = os.environ.get("SOLANA_PRIVATE_KEY")
     if env_key:
         try:
-            secret  = json.loads(env_key)
-            keypair = Keypair.from_bytes(bytes(secret))
+            keypair = _parse_key(env_key)
             print(f"[wallet] Loaded wallet from env: {keypair.pubkey()}")
             return keypair
         except Exception as e:
             raise RuntimeError(f"SOLANA_PRIVATE_KEY is set but could not be parsed: {e}")
 
-    # 2. Local file
     if os.path.exists(keypair_path):
         with open(keypair_path, "r") as f:
-            secret = json.load(f)
-        keypair = Keypair.from_bytes(bytes(secret))
+            keypair = _parse_key(f.read())
         print(f"[wallet] Loaded wallet from file: {keypair.pubkey()}")
         return keypair
 
-    # 3. Generate new
     keypair    = Keypair()
     secret_lst = list(bytes(keypair))
     with open(keypair_path, "w") as f:
@@ -38,7 +47,7 @@ def load_or_create(keypair_path: str) -> Keypair:
 
     print(f"[wallet] Generated new wallet: {keypair.pubkey()}")
     print(f"[wallet] !! Fund this address with SOL before trading !!")
-    print(f"[wallet] Private key (set as SOLANA_PRIVATE_KEY env var in Railway):")
-    print(f"[wallet]   {json.dumps(secret_lst)}")
+    print(f"[wallet] To use your existing Phantom wallet instead, set:")
+    print(f"[wallet]   SOLANA_PRIVATE_KEY=<your base58 private key from Phantom>")
     print(f"[wallet] Keypair also saved to: {keypair_path}")
     return keypair

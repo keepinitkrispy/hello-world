@@ -14,6 +14,7 @@ import aiohttp
 from solana.rpc.async_api import AsyncClient
 
 import config
+import filters
 import monitor
 import trader
 import wallet
@@ -32,8 +33,13 @@ async def _handle(
     pct    = coin.get("_bonding_pct", 0)
 
     try:
+        # Run all coin-quality filters before committing any capital
+        ok, reason = await filters.passes_all(session, rpc, coin)
+        if not ok:
+            return  # already logged by filters module
+
         if dry_run:
-            print(f"[bot] [DRY RUN] Would buy {config.BUY_AMOUNT_SOL} SOL of {symbol} @ {pct:.1f}% bonding")
+            print(f"[bot] [DRY RUN] PASS {symbol} @ {pct:.1f}% bonding — would buy {config.BUY_AMOUNT_SOL} SOL")
             return
 
         trade = await trader.buy(session, rpc, keypair, mint, symbol)
