@@ -35,18 +35,18 @@ PARK_PROFITS = True
 
 # ── Coin filters ──────────────────────────────────────────────────────────────
 # Holder concentration: skip if top real holders (excl. bonding curve) own > this %
-MAX_TOP_HOLDER_PCT   = 20   # no single wallet should hold more than 20%
-MAX_TOP5_COMBINED_PCT = 20  # top 5 real wallets combined shouldn't exceed 20%
+MAX_TOP_HOLDER_PCT   = 35   # no single wallet should hold more than 35%
+MAX_TOP5_COMBINED_PCT = 50  # top 5 real wallets combined shouldn't exceed 50%
 
 # Dev spam: skip if creator has launched this many coins before
 MAX_CREATOR_COINS    = 4
 
 # Organic trading: minimum social engagement (pump.fun reply count)
-MIN_REPLY_COUNT      = 3
+MIN_REPLY_COUNT      = 1
 
 # Bonding curve velocity: skip if coin went from 0 → threshold in under N seconds
 # (too fast = coordinated bot buy-up)
-MIN_AGE_SECONDS      = 300  # coin must be at least 5 minutes old
+MIN_AGE_SECONDS      = 60   # coin must be at least 1 minute old
 
 # Copy-coin: skip if name/symbol too similar to a known popular coin
 # (checked via fuzzy match against a built-in list)
