@@ -33,16 +33,14 @@ async def _handle(
     pct    = coin.get("_bonding_pct", 0)
 
     try:
-        # Run all coin-quality filters before committing any capital
         ok, reason = await filters.passes_all(session, rpc, coin)
         if not ok:
-            return  # already logged by filters module
+            return
 
         if dry_run:
             print(f"[bot] [DRY RUN] PASS {symbol} @ {pct:.1f}% bonding")
             return
 
-        # Dynamic bet: % of spendable balance, always keeping gas reserve
         bal_resp    = await rpc.get_balance(keypair.pubkey())
         balance_sol = bal_resp.value / 1_000_000_000
         spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
@@ -57,7 +55,7 @@ async def _handle(
         if trade is None:
             return
 
-        # Scalp loop
+        peak_pnl = 0.0
         while True:
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
 
@@ -65,9 +63,10 @@ async def _handle(
             if value is None:
                 continue
 
-            pnl     = trade.pnl_pct(value)
-            elapsed = trade.elapsed()
-            print(f"[bot] {symbol} | P&L {pnl:+.1f}% | held {elapsed:.0f}s")
+            pnl      = trade.pnl_pct(value)
+            elapsed  = trade.elapsed()
+            peak_pnl = max(peak_pnl, pnl)
+            print(f"[bot] {symbol} | P&L {pnl:+.1f}% | peak {peak_pnl:+.1f}% | held {elapsed:.0f}s")
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
@@ -76,7 +75,16 @@ async def _handle(
                     if config.PARK_AS_USDC:
                         await trader.park_profit_in_usdc(session, rpc, keypair, profit)
                     else:
-                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL (no extra swap)")
+                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL")
+                break
+            elif peak_pnl >= config.TRAIL_ACTIVATE_PCT and pnl <= peak_pnl - config.TRAIL_DRAWDOWN_PCT:
+                sol_back = await trader.sell(session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)")
+                if config.PARK_PROFITS and sol_back > trade.sol_spent:
+                    profit = sol_back - trade.sol_spent
+                    if config.PARK_AS_USDC:
+                        await trader.park_profit_in_usdc(session, rpc, keypair, profit)
+                    else:
+                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL")
                 break
             elif pnl <= -config.STOP_LOSS_PCT:
                 await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
@@ -88,7 +96,7 @@ async def _handle(
                     if config.PARK_AS_USDC:
                         await trader.park_profit_in_usdc(session, rpc, keypair, profit)
                     else:
-                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL (no extra swap)")
+                        print(f"[bot] Profit {profit:+.4f} SOL parked as SOL")
                 break
     finally:
         active.discard(mint)
@@ -112,12 +120,13 @@ async def main(dry_run: bool) -> None:
 
     print("[bot] v3 STARTING", flush=True)
     print(
-        f"[bot] BC momentum: +{config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}pts/{config.MOMENTUM_WINDOW_SEC}s",
+        f"[bot] window={config.MOMENTUM_WINDOW_SEC}s | stop={config.STOP_LOSS_PCT}% | "
+        f"trail activates @+{config.TRAIL_ACTIVATE_PCT}% | max_hold={config.MAX_HOLD_SECONDS}s",
         flush=True,
     )
 
-    queue        = asyncio.Queue()
-    seen_mints:  set = set()
+    queue         = asyncio.Queue()
+    seen_mints:   set = set()
     active_mints: set = set()
 
     monitor_task = asyncio.create_task(monitor.run(queue, seen_mints))

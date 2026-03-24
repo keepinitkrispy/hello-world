@@ -50,23 +50,35 @@ async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
                 print(f"[monitor] API {resp.status}: {body[:200]}", flush=True)
                 return []
             data = await resp.json(content_type=None)
-            if not isinstance(data, list):
+
+            # v3 API may return {"coins": [...]} or a plain list
+            if isinstance(data, dict):
+                coins_raw = (
+                    data.get("coins")
+                    or data.get("data")
+                    or data.get("results")
+                    or []
+                )
+                print(f"[monitor] API ok (dict keys={list(data.keys())}) — {len(coins_raw)} coins raw", flush=True)
+            elif isinstance(data, list):
+                coins_raw = data
+                print(f"[monitor] API ok — {len(coins_raw)} coins raw", flush=True)
+            else:
                 print(f"[monitor] Unexpected response type: {type(data)} — {str(data)[:200]}", flush=True)
                 return []
-            print(f"[monitor] API ok — {len(data)} coins raw", flush=True)
     except Exception as e:
         print(f"[monitor] Fetch error: {type(e).__name__}: {e}", flush=True)
         return []
 
     results = []
-    for coin in data:
+    for coin in coins_raw:
         if not isinstance(coin, dict):
             continue
         if coin.get("complete"):
             continue
         bc = _bc_pct(coin)
         if bc >= config.MAX_BC_PCT:
-            continue  # too close to graduation chaos
+            continue
         results.append(coin)
     return results
 
@@ -90,7 +102,7 @@ def _record_and_check(coin: dict) -> tuple[bool, float]:
 
     if rise >= config.MIN_BC_RISE_PCT:
         if rise > config.MAX_BC_RISE_PCT:
-            return False, rise  # too fast — bots
+            return False, rise
         return True, rise
 
     return False, rise
