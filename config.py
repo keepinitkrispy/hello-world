@@ -1,5 +1,8 @@
+import os
+
 # ── Solana RPC ────────────────────────────────────────────────────────────────
-RPC_URL = "https://api.mainnet-beta.solana.com"
+# Override with a faster dedicated RPC (Helius, QuickNode, etc.) via env var
+RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 
 # ── Wallet ────────────────────────────────────────────────────────────────────
 KEYPAIR_PATH = "./keypair.json"
