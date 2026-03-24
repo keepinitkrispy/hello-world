@@ -111,9 +111,9 @@ async def main(dry_run: bool) -> None:
         print("[bot] DRY RUN — monitoring only, no trades will execute")
 
     print(
-        f"[bot] Watching pump.fun for tokens at "
-        f"{config.BOND_THRESHOLD_MIN}–{config.BOND_THRESHOLD_MAX}% bonding curve "
-        f"(poll every {config.POLL_INTERVAL_SEC}s) …"
+        f"[bot] Watching pump.fun for momentum moves "
+        f"(+{config.MIN_PRICE_RISE_PCT}%–{config.MAX_PRICE_RISE_PCT}% in {config.MOMENTUM_WINDOW_SEC}s, "
+        f"mcap ${config.MIN_MCAP_USD:,}–${config.MAX_MCAP_USD:,}) …"
     )
 
     queue        = asyncio.Queue()

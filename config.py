@@ -15,8 +15,12 @@ GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))  # always kep
 MIN_TRADE_SOL   = 0.01      # don't bother trading below this (fees would eat it)
 
 # ── pump.fun monitoring ───────────────────────────────────────────────────────
-BOND_THRESHOLD_MIN = 85     # Start watching at 85% bonding curve progress
-BOND_THRESHOLD_MAX = 98     # Stop at 98% (already too close to graduation chaos)
+# Momentum-based: buy when price rises fast, not based on bonding curve %
+MOMENTUM_WINDOW_SEC  = 60   # measure price rise over this window
+MIN_PRICE_RISE_PCT   = 25   # must have risen at least 25% in the window
+MAX_PRICE_RISE_PCT   = 300  # skip if >300% in window — likely bot manipulation
+MIN_MCAP_USD         = 8_000    # ignore micro-dust coins
+MAX_MCAP_USD         = 80_000   # ignore coins already too pumped to run
 
 # ── Exit conditions (whichever triggers first) ────────────────────────────────
 PROFIT_TARGET_PCT = 20      # Sell when up 20%
