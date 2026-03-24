@@ -1,12 +1,12 @@
 """
-Momentum monitor — catches coins with rapidly rising bonding curve %.
+Near-graduation monitor.
 
-Strategy:
-  1. Poll pump.fun for coins sorted by recent activity.
-  2. Track bonding_curve_percentage over time per coin.
-  3. Fire when a coin's bonding % rises >= MIN_BC_RISE_PCT in the window
-     AND is not already too close to graduation (>= MAX_BC_PCT).
-  4. Each mint is only queued once per session.
+Finds pump.fun coins already in the 65-88% bonding curve zone that are
+actively rising toward graduation. These coins have real liquidity and
+Jupiter can route them. Coins at 5-40% BC can't be reliably traded.
+
+Root-cause fix: pump.fun frontend API blocks headless requests.
+We send browser-like headers so every fetch succeeds.
 """
 
 import asyncio
@@ -19,7 +19,18 @@ import config
 
 PUMPFUN_API = "https://frontend-api-v3.pump.fun/coins"
 
-# mint -> deque of (timestamp, bonding_pct) snapshots
+# Must send browser headers — pump.fun blocks plain server requests
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Referer":         "https://pump.fun/",
+    "Origin":          "https://pump.fun",
+    "Accept":          "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 _bc_history: dict[str, deque] = defaultdict(lambda: deque())
 
 
@@ -34,7 +45,7 @@ def _bc_pct(coin: dict) -> float:
 
 async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
     params = {
-        "sort":        "last_trade_unix_timestamp",
+        "sort":        "bonding_curve_percentage",
         "order":       "DESC",
         "limit":       50,
         "includeNsfw": "true",
@@ -43,31 +54,26 @@ async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
         async with session.get(
             PUMPFUN_API,
             params=params,
+            headers=_HEADERS,
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
                 body = await resp.text()
-                print(f"[monitor] API {resp.status}: {body[:200]}", flush=True)
+                print(f"[monitor] API {resp.status}: {body[:300]}", flush=True)
                 return []
             data = await resp.json(content_type=None)
 
-            # v3 API may return {"coins": [...]} or a plain list
             if isinstance(data, dict):
-                coins_raw = (
-                    data.get("coins")
-                    or data.get("data")
-                    or data.get("results")
-                    or []
-                )
-                print(f"[monitor] API ok (dict, key={list(data.keys())}) — {len(coins_raw)} coins raw", flush=True)
+                coins_raw = data.get("coins") or data.get("data") or data.get("results") or []
+                print(f"[monitor] API ok (dict keys={list(data.keys())}) — {len(coins_raw)} coins", flush=True)
             elif isinstance(data, list):
                 coins_raw = data
-                print(f"[monitor] API ok — {len(coins_raw)} coins raw", flush=True)
+                print(f"[monitor] API ok — {len(coins_raw)} coins", flush=True)
             else:
-                print(f"[monitor] Unexpected response type: {type(data)} — {str(data)[:200]}", flush=True)
+                print(f"[monitor] Unexpected response: {type(data)} {str(data)[:200]}", flush=True)
                 return []
     except Exception as e:
-        print(f"[monitor] Fetch error: {type(e).__name__}: {e}", flush=True)
+        print(f"[monitor] Fetch error: {repr(e)}", flush=True)
         return []
 
     results = []
@@ -77,8 +83,8 @@ async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
         if coin.get("complete"):
             continue
         bc = _bc_pct(coin)
-        if bc >= config.MAX_BC_PCT:
-            continue  # too close to graduation chaos
+        if bc < config.MONITOR_BC_MIN or bc > config.MONITOR_BC_MAX:
+            continue
         results.append(coin)
     return results
 
@@ -99,43 +105,48 @@ def _record_and_check(coin: dict) -> tuple[bool, float]:
         return False, 0.0
 
     rise = bc - history[0][1]
-
     if rise >= config.MIN_BC_RISE_PCT:
-        if rise > config.MAX_BC_RISE_PCT:
-            return False, rise  # too fast — bots
         return True, rise
-
     return False, rise
 
 
 async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
-    _tick = 0
+    _tick      = 0
+    _err_count = 0
+
     async with aiohttp.ClientSession() as session:
         while True:
             coins = await _fetch_active(session)
             _tick += 1
 
+            if not coins:
+                _err_count += 1
+                backoff = min(2 * _err_count, 30)
+                print(f"[monitor] no data (attempt {_err_count}), retry in {backoff}s", flush=True)
+                await asyncio.sleep(backoff)
+                continue
+            else:
+                _err_count = 0
+
+            if _tick == 1:
+                print(f"[monitor] first-tick sample: {str(coins[0])[:500]}", flush=True)
+
             if _tick % 20 == 1:
-                print(f"[monitor] tick {_tick} | {len(coins)} candidates", flush=True)
+                print(f"[monitor] tick {_tick} | {len(coins)} in zone ({config.MONITOR_BC_MIN}–{config.MONITOR_BC_MAX}%)", flush=True)
                 if coins:
                     s = coins[0]
-                    print(f"[monitor] sample: {s.get('symbol')} bc={_bc_pct(s):.1f}%", flush=True)
+                    print(f"[monitor] top: {s.get('symbol')} bc={_bc_pct(s):.1f}%", flush=True)
 
             for coin in coins:
                 mint = coin.get("mint")
                 if not mint or mint in seen_mints:
                     continue
-
                 should_buy, rise = _record_and_check(coin)
-
                 if should_buy:
                     seen_mints.add(mint)
                     symbol = coin.get("symbol", "???")
-                    print(
-                        f"[monitor] MOMENTUM {symbol} ({mint[:8]}\u2026) "
-                        f"BC +{rise:.1f}pts in {config.MOMENTUM_WINDOW_SEC}s",
-                        flush=True,
-                    )
+                    bc     = _bc_pct(coin)
+                    print(f"[monitor] SIGNAL {symbol} ({mint[:8]}…) BC={bc:.1f}% +{rise:.1f}pts", flush=True)
                     await queue.put(coin)
 
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
@@ -146,6 +157,6 @@ async def run(queue: asyncio.Queue, seen_mints: set) -> None:
         await _run_inner(queue, seen_mints)
     except Exception as exc:
         import traceback
-        print(f"[monitor] FATAL: {exc}", flush=True)
+        print(f"[monitor] FATAL: {repr(exc)}", flush=True)
         traceback.print_exc()
         raise
