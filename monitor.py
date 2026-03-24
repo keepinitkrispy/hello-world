@@ -17,7 +17,7 @@ import aiohttp
 
 import config
 
-PUMPFUN_API = "https://frontend-api.pump.fun/coins"
+PUMPFUN_API = "https://frontend-api-v3.pump.fun/coins"
 
 # mint -> deque of (timestamp, bonding_pct) snapshots
 _bc_history: dict[str, deque] = defaultdict(lambda: deque())
