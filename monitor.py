@@ -120,7 +120,7 @@ async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
                     seen_mints.add(mint)
                     symbol = coin.get("symbol", "???")
                     print(
-                        f"[monitor] MOMENTUM {symbol} ({mint[:8]}…) "
+                        f"[monitor] MOMENTUM {symbol} ({mint[:8]}\u2026) "
                         f"BC +{rise:.1f}pts in {config.MOMENTUM_WINDOW_SEC}s",
                         flush=True,
                     )
