@@ -9,6 +9,7 @@ Usage:
 import argparse
 import asyncio
 import sys
+import time
 
 import aiohttp
 from solana.rpc.async_api import AsyncClient
@@ -18,6 +19,18 @@ import filters
 import monitor
 import trader
 import wallet
+
+
+def _task_error_handler(task: asyncio.Task) -> None:
+    """Log any exception from a fire-and-forget task so it isn't silently lost."""
+    try:
+        exc = task.exception()
+        if exc:
+            import traceback
+            print(f"[bot] TASK CRASHED: {task.get_name()}: {exc}", flush=True)
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
+    except asyncio.CancelledError:
+        pass
 
 
 async def _handle(
@@ -110,39 +123,49 @@ async def main(dry_run: bool) -> None:
         balance_resp = await rpc.get_balance(kp.pubkey())
         balance_sol  = balance_resp.value / 1_000_000_000
         spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
-        print(f"[bot] Balance: {balance_sol:.4f} SOL | gas reserve: {config.GAS_RESERVE_SOL} SOL | spendable: {spendable:.4f} SOL")
+        print(f"[bot] Balance: {balance_sol:.4f} SOL | gas reserve: {config.GAS_RESERVE_SOL} SOL | spendable: {spendable:.4f} SOL", flush=True)
         if spendable < config.MIN_TRADE_SOL:
-            print(f"[bot] !! Spendable balance too low — fund {kp.pubkey()} then restart")
+            print(f"[bot] !! Spendable balance too low — fund {kp.pubkey()} then restart", flush=True)
             sys.exit(1)
     else:
         rpc = None
-        print("[bot] DRY RUN — monitoring only, no trades will execute")
+        print("[bot] DRY RUN — monitoring only, no trades will execute", flush=True)
 
-    print("[bot] v3 STARTING", flush=True)
-    print(
-        f"[bot] window={config.MOMENTUM_WINDOW_SEC}s | stop={config.STOP_LOSS_PCT}% | "
-        f"trail activates @+{config.TRAIL_ACTIVATE_PCT}% | max_hold={config.MAX_HOLD_SECONDS}s",
-        flush=True,
-    )
+    print("[bot] STARTING — window={}s stop={}% trail=+{}%/{}% max_hold={}s".format(
+        config.MOMENTUM_WINDOW_SEC, config.STOP_LOSS_PCT,
+        config.TRAIL_ACTIVATE_PCT, config.TRAIL_DRAWDOWN_PCT,
+        config.MAX_HOLD_SECONDS,
+    ), flush=True)
 
     queue         = asyncio.Queue()
     seen_mints:   set = set()
     active_mints: set = set()
 
-    monitor_task = asyncio.create_task(monitor.run(queue, seen_mints))
+    monitor_task = asyncio.create_task(monitor.run(queue, seen_mints), name="monitor")
+    monitor_task.add_done_callback(_task_error_handler)
+
+    last_heartbeat = time.time()
 
     async with aiohttp.ClientSession() as session:
         try:
             while True:
-                coin = await queue.get()
+                # Heartbeat every 30s so we know the bot is alive even when idle
+                try:
+                    coin = await asyncio.wait_for(queue.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    print(f"[bot] heartbeat — waiting for momentum signals...", flush=True)
+                    continue
+
                 mint = coin.get("mint")
                 if mint and mint not in active_mints:
                     active_mints.add(mint)
-                    asyncio.create_task(
-                        _handle(session, rpc, kp, coin, dry_run, active_mints)
+                    t = asyncio.create_task(
+                        _handle(session, rpc, kp, coin, dry_run, active_mints),
+                        name=f"handle-{mint[:8]}",
                     )
+                    t.add_done_callback(_task_error_handler)
         except (KeyboardInterrupt, asyncio.CancelledError):
-            print("\n[bot] Shutting down …")
+            print("\n[bot] Shutting down …", flush=True)
         finally:
             monitor_task.cancel()
             if rpc:
