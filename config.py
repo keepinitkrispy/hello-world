@@ -7,24 +7,26 @@ RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"
 KEYPAIR_PATH = "./keypair.json"
 
 # ── Trade sizing ──────────────────────────────────────────────────────────────
-TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.30"))
-GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))
+TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.30"))   # 30% of spendable per trade
+GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))  # always kept back for fees
 MIN_TRADE_SOL   = 0.01
 
 # ── pump.fun monitoring ───────────────────────────────────────────────────────
-MOMENTUM_WINDOW_SEC  = 20
-MIN_BC_RISE_PCT      = 5
-MAX_BC_RISE_PCT      = 40
-MAX_BC_PCT           = 90
+# Near-graduation zone: coins at 65-88% BC have real liquidity and
+# Jupiter can route them. Below 65% is too early; above 88% is graduation chaos.
+MONITOR_BC_MIN       = 65    # only watch coins already at 65%+ bonding curve
+MONITOR_BC_MAX       = 88    # stop below 88% (graduation chaos at 90%+)
+MOMENTUM_WINDOW_SEC  = 30    # measure BC rise over this window
+MIN_BC_RISE_PCT      = 2     # fire when BC rises 2+ points (coins at 65%+ move slower)
 
-# ── Exit conditions ────────────────────────────────────────────────────────────────
-PROFIT_TARGET_PCT    = 20
-STOP_LOSS_PCT        = 7
-MAX_HOLD_SECONDS     = 60
+# ── Exit conditions (whichever triggers first) ────────────────────────────────
+PROFIT_TARGET_PCT    = 20    # sell when up 20%
+STOP_LOSS_PCT        = 7     # sell when down 7%
+MAX_HOLD_SECONDS     = 60    # force sell after 1 minute
 
 # ── Trailing stop ────────────────────────────────────────────────────────────
-TRAIL_ACTIVATE_PCT   = 5
-TRAIL_DRAWDOWN_PCT   = 5
+TRAIL_ACTIVATE_PCT   = 5     # start trailing once up 5%
+TRAIL_DRAWDOWN_PCT   = 5     # sell if drops 5% from peak
 
 # ── Timing ────────────────────────────────────────────────────────────────────
 POLL_INTERVAL_SEC = 0.5
@@ -43,8 +45,6 @@ PARK_PROFITS  = True
 PARK_AS_USDC  = False
 
 # ── Coin filters ──────────────────────────────────────────────────────────────
-MAX_TOP_HOLDER_PCT    = 35
-MAX_TOP5_COMBINED_PCT = 50
 MAX_CREATOR_COINS     = 4
 MIN_REPLY_COUNT       = 0
 MIN_AGE_SECONDS       = 20
