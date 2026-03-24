@@ -24,13 +24,17 @@ _price_history: dict[str, deque] = defaultdict(lambda: deque())
 
 
 def _current_price(coin: dict) -> float:
-    """Extract USD price from whichever field exists."""
-    return float(
-        coin.get("price")
-        or coin.get("usd_price")
-        or coin.get("last_price")
-        or 0
-    )
+    """Derive USD price per token. Falls back to mcap/supply."""
+    for field in ("price", "usd_price", "last_price", "token_price"):
+        v = coin.get(field)
+        if v:
+            return float(v)
+    # Reliable fallback: market_cap_usd / total_supply
+    mcap   = float(coin.get("usd_market_cap") or coin.get("market_cap_usd") or 0)
+    supply = float(coin.get("total_supply") or 1_000_000_000)
+    if mcap > 0 and supply > 0:
+        return mcap / supply
+    return 0.0
 
 
 def _mcap(coin: dict) -> float:
@@ -64,13 +68,19 @@ async def _fetch_active(session: aiohttp.ClientSession) -> list[dict]:
             continue
         if coin.get("complete"):
             continue  # already graduated, skip
-        mcap = _mcap(coin)
-        if not (config.MIN_MCAP_USD <= mcap <= config.MAX_MCAP_USD):
-            continue
+        mcap  = _mcap(coin)
         price = _current_price(coin)
         if price <= 0:
             continue
+        if not (config.MIN_MCAP_USD <= mcap <= config.MAX_MCAP_USD):
+            continue
         results.append(coin)
+
+    if data and not results:
+        # Help diagnose why everything is filtered — show first coin's mcap
+        sample = next((c for c in data if isinstance(c, dict)), {})
+        print(f"[monitor] All {len(data)} coins filtered — sample mcap: ${_mcap(sample):,.0f} (range ${config.MIN_MCAP_USD:,}–${config.MAX_MCAP_USD:,})")
+
     return results
 
 
