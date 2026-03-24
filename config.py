@@ -25,6 +25,14 @@ POLL_INTERVAL_SEC = 0.5     # How often to poll pump.fun and check positions
 # ── Jupiter ───────────────────────────────────────────────────────────────────
 SLIPPAGE_BPS = 300          # 3% slippage tolerance
 
+# Priority fee sent to Jupiter so txs land fast during congestion
+# "auto" lets Jupiter pick; or set a fixed lamport value e.g. 500_000
+PRIORITY_FEE = "auto"
+
+# Estimated round-trip gas cost (buy tx + sell tx) in SOL.
+# At ~$130/SOL, $5 ≈ 0.038 SOL — used to calculate true net profit.
+GAS_COST_ROUNDTRIP_SOL = float(os.environ.get("GAS_COST_ROUNDTRIP_SOL", "0.038"))
+
 # ── Token addresses ───────────────────────────────────────────────────────────
 SOL_MINT  = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"

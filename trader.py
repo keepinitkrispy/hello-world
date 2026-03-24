@@ -50,9 +50,10 @@ async def _swap(
     quote: dict,
 ) -> Optional[str]:
     body = {
-        "quoteResponse":    quote,
-        "userPublicKey":    str(keypair.pubkey()),
-        "wrapAndUnwrapSol": True,
+        "quoteResponse":              quote,
+        "userPublicKey":              str(keypair.pubkey()),
+        "wrapAndUnwrapSol":           True,
+        "prioritizationFeeLamports":  config.PRIORITY_FEE,
     }
     try:
         async with session.post(
@@ -98,7 +99,10 @@ class Trade:
         return time.time() - self._entry_time
 
     def pnl_pct(self, current_sol_value: float) -> float:
-        return (current_sol_value - self.sol_spent) / self.sol_spent * 100
+        """P&L after gas. gas is split: half charged on buy, half on sell."""
+        net_out = current_sol_value - config.GAS_COST_ROUNDTRIP_SOL
+        cost_in = self.sol_spent + config.GAS_COST_ROUNDTRIP_SOL
+        return (net_out - cost_in) / cost_in * 100
 
 
 # ── Public buy / sell / price ─────────────────────────────────────────────────
@@ -152,10 +156,10 @@ async def sell(
         print(f"[trader] No sell quote for {trade.symbol} — retrying next cycle")
         return 0.0
 
-    sol_out = int(quote.get("outAmount", 0)) / LAMPORTS
-    pnl     = trade.pnl_pct(sol_out)
-    net     = sol_out - trade.sol_spent
-    print(f"[trader] Selling {trade.symbol} [{reason}] | {sol_out:.4f} SOL | P&L {pnl:+.1f}% ({net:+.4f} SOL)")
+    sol_out  = int(quote.get("outAmount", 0)) / LAMPORTS
+    pnl      = trade.pnl_pct(sol_out)
+    net      = sol_out - trade.sol_spent - config.GAS_COST_ROUNDTRIP_SOL
+    print(f"[trader] Selling {trade.symbol} [{reason}] | {sol_out:.4f} SOL | P&L {pnl:+.1f}% (net after gas: {net:+.4f} SOL)")
 
     sig = await _swap(session, rpc, keypair, quote)
     if sig:
