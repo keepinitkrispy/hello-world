@@ -120,15 +120,28 @@ def _record_and_check(coin: dict) -> tuple[bool, float]:
 
 async def run(queue: asyncio.Queue, seen_mints: set) -> None:
     """Continuously poll pump.fun and enqueue momentum candidates."""
+    _tick = 0
     async with aiohttp.ClientSession() as session:
         while True:
             coins = await _fetch_active(session)
+            _tick += 1
+
+            # Every 20 ticks (~10s) print a heartbeat so we know it's alive
+            if _tick % 20 == 1:
+                print(f"[monitor] tracking {len(coins)} coins in mcap range | tick {_tick}")
+                if coins:
+                    s = coins[0]
+                    print(f"[monitor] sample: {s.get('symbol')} mcap=${_mcap(s):,.0f} price={_current_price(s):.8f}")
+
             for coin in coins:
                 mint = coin.get("mint")
                 if not mint or mint in seen_mints:
                     continue
 
                 should_buy, rise_pct = _record_and_check(coin)
+                if rise_pct > 0 and _tick % 20 == 1:
+                    print(f"[monitor] {coin.get('symbol')} rise so far: +{rise_pct:.1f}%")
+
                 if should_buy:
                     seen_mints.add(mint)
                     symbol = coin.get("symbol", "???")
