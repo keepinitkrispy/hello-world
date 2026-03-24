@@ -112,8 +112,8 @@ async def main(dry_run: bool) -> None:
 
     print(
         f"[bot] Watching pump.fun for momentum moves "
-        f"(+{config.MIN_PRICE_RISE_PCT}%–{config.MAX_PRICE_RISE_PCT}% in {config.MOMENTUM_WINDOW_SEC}s, "
-        f"mcap ${config.MIN_MCAP_USD:,}–${config.MAX_MCAP_USD:,}) …"
+        f"(BC +{config.MIN_BC_RISE_PCT}–{config.MAX_BC_RISE_PCT}pts in {config.MOMENTUM_WINDOW_SEC}s, "
+        f"max BC {config.MAX_BC_PCT}%) …"
     )
 
     queue        = asyncio.Queue()

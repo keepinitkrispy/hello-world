@@ -1,36 +1,35 @@
 import os
 
-# ── Solana RPC ────────────────────────────────────────────────────────────────
+# ── Solana RPC ──────────────────────────────────────────────────────
 # Override with a faster dedicated RPC (Helius, QuickNode, etc.) via env var
 RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 
-# ── Wallet ────────────────────────────────────────────────────────────────────
+# ── Wallet ────────────────────────────────────────────────────────────
 KEYPAIR_PATH = "./keypair.json"
 
-# ── Trade sizing ──────────────────────────────────────────────────────────────
+# ── Trade sizing ──────────────────────────────────────────────────────
 # Bot bets a % of spendable balance each trade so it compounds wins and
 # scales back after losses — you should never need to top it up.
 TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.30"))   # 30% of spendable per trade
 GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))  # always kept back for fees
 MIN_TRADE_SOL   = 0.01      # don't bother trading below this (fees would eat it)
 
-# ── pump.fun monitoring ───────────────────────────────────────────────────────
-# Momentum-based: buy when price rises fast, not based on bonding curve %
-MOMENTUM_WINDOW_SEC  = 60   # measure price rise over this window
-MIN_PRICE_RISE_PCT   = 25   # must have risen at least 25% in the window
-MAX_PRICE_RISE_PCT   = 300  # skip if >300% in window — likely bot manipulation
-MIN_MCAP_USD         = 8_000    # ignore micro-dust coins
-MAX_MCAP_USD         = 80_000   # ignore coins already too pumped to run
+# ── pump.fun monitoring ───────────────────────────────────────────────────
+# Track bonding curve % rise — reliable field that's always present
+MOMENTUM_WINDOW_SEC  = 60   # measure BC rise over this window
+MIN_BC_RISE_PCT      = 5    # fire when BC rises 5+ points in the window
+MAX_BC_RISE_PCT      = 40   # skip if >40pts rise — likely coordinated bot pump
+MAX_BC_PCT           = 90   # skip coins already above 90% (graduation chaos)
 
-# ── Exit conditions (whichever triggers first) ────────────────────────────────
+# ── Exit conditions (whichever triggers first) ────────────────────────────
 PROFIT_TARGET_PCT = 20      # Sell when up 20%
 STOP_LOSS_PCT     = 10      # Sell when down 10%
 MAX_HOLD_SECONDS  = 120     # Force sell after 2 minutes
 
-# ── Timing ────────────────────────────────────────────────────────────────────
+# ── Timing ──────────────────────────────────────────────────────────────
 POLL_INTERVAL_SEC = 0.5     # How often to poll pump.fun and check positions
 
-# ── Jupiter ───────────────────────────────────────────────────────────────────
+# ── Jupiter ─────────────────────────────────────────────────────────────
 SLIPPAGE_BPS = 300          # 3% slippage tolerance
 
 # Priority fee sent to Jupiter so txs land fast during congestion
@@ -41,18 +40,18 @@ PRIORITY_FEE = "auto"
 # At ~$130/SOL, $5 ≈ 0.038 SOL — used to calculate true net profit.
 GAS_COST_ROUNDTRIP_SOL = float(os.environ.get("GAS_COST_ROUNDTRIP_SOL", "0.038"))
 
-# ── Token addresses ───────────────────────────────────────────────────────────
+# ── Token addresses ───────────────────────────────────────────────────────
 SOL_MINT  = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-# ── Profit parking ────────────────────────────────────────────────────────────
+# ── Profit parking ─────────────────────────────────────────────────────────
 # After a winning trade, keep profit aside so it's never re-risked.
 # PARK_PROFITS=True  → hold profit as SOL (no extra swap, no extra gas)
 # PARK_AS_USDC=True  → additionally convert profit to USDC (costs one more tx)
 PARK_PROFITS  = True
 PARK_AS_USDC  = False  # set True only if you want hard USDC conversion
 
-# ── Coin filters ──────────────────────────────────────────────────────────────
+# ── Coin filters ───────────────────────────────────────────────────────────
 # Holder concentration: skip if top real holders (excl. bonding curve) own > this %
 MAX_TOP_HOLDER_PCT   = 35   # no single wallet should hold more than 35%
 MAX_TOP5_COMBINED_PCT = 50  # top 5 real wallets combined shouldn't exceed 50%
