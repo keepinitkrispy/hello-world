@@ -145,11 +145,12 @@ async def sell(
     keypair: Keypair,
     trade: Trade,
     reason: str,
-) -> None:
+) -> float:
+    """Execute sell. Returns SOL received (0.0 on failure)."""
     quote = await _quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
     if not quote:
         print(f"[trader] No sell quote for {trade.symbol} — retrying next cycle")
-        return
+        return 0.0
 
     sol_out = int(quote.get("outAmount", 0)) / LAMPORTS
     pnl     = trade.pnl_pct(sol_out)
@@ -159,5 +160,30 @@ async def sell(
     sig = await _swap(session, rpc, keypair, quote)
     if sig:
         print(f"[trader] Sold {trade.symbol}: {sig}")
+        return sol_out
     else:
         print(f"[trader] Sell tx failed for {trade.symbol}")
+        return 0.0
+
+
+async def park_profit_in_usdc(
+    session: aiohttp.ClientSession,
+    rpc: AsyncClient,
+    keypair: Keypair,
+    profit_sol: float,
+) -> None:
+    """Swap profit SOL → USDC so it's safe and never risked again."""
+    if profit_sol <= 0:
+        return
+    lamports = int(profit_sol * LAMPORTS)
+    quote    = await _quote(session, config.SOL_MINT, config.USDC_MINT, lamports)
+    if not quote:
+        print(f"[trader] Could not get SOL→USDC quote for profit parking")
+        return
+    usdc_out = int(quote.get("outAmount", 0)) / 1_000_000  # USDC has 6 decimals
+    print(f"[trader] Parking profit: {profit_sol:.4f} SOL → {usdc_out:.2f} USDC")
+    sig = await _swap(session, rpc, keypair, quote)
+    if sig:
+        print(f"[trader] Profit parked in USDC: {sig}")
+    else:
+        print(f"[trader] USDC parking failed — profit stays as SOL")

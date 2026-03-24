@@ -59,13 +59,19 @@ async def _handle(
             print(f"[bot] {symbol} | P&L {pnl:+.1f}% | held {elapsed:.0f}s")
 
             if pnl >= config.PROFIT_TARGET_PCT:
-                await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
+                sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
+                if config.PARK_PROFITS and sol_back > trade.sol_spent:
+                    profit = sol_back - trade.sol_spent
+                    await trader.park_profit_in_usdc(session, rpc, keypair, profit)
                 break
             elif pnl <= -config.STOP_LOSS_PCT:
                 await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
                 break
             elif elapsed >= config.MAX_HOLD_SECONDS:
-                await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
+                sol_back = await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
+                if config.PARK_PROFITS and sol_back > trade.sol_spent:
+                    profit = sol_back - trade.sol_spent
+                    await trader.park_profit_in_usdc(session, rpc, keypair, profit)
                 break
     finally:
         active.discard(mint)

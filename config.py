@@ -26,7 +26,12 @@ POLL_INTERVAL_SEC = 0.5     # How often to poll pump.fun and check positions
 SLIPPAGE_BPS = 300          # 3% slippage tolerance
 
 # ── Token addresses ───────────────────────────────────────────────────────────
-SOL_MINT = "So11111111111111111111111111111111111111112"
+SOL_MINT  = "So11111111111111111111111111111111111111112"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+# ── Profit parking ────────────────────────────────────────────────────────────
+# After a winning trade, sweep profit into USDC and only rebuy with principal
+PARK_PROFITS = True
 
 # ── Coin filters ──────────────────────────────────────────────────────────────
 # Holder concentration: skip if top real holders (excl. bonding curve) own > this %
