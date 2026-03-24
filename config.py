@@ -17,7 +17,7 @@ MIN_TRADE_SOL   = 0.01      # don't bother trading below this (fees would eat it
 # ── pump.fun monitoring ───────────────────────────────────────────────────────
 # Momentum-based: buy when price rises fast, not based on bonding curve %
 MOMENTUM_WINDOW_SEC  = 60   # measure price rise over this window
-MIN_PRICE_RISE_PCT   = 25   # must have risen at least 25% in the window
+MIN_PRICE_RISE_PCT   = 10   # must have risen at least 10% in the window
 MAX_PRICE_RISE_PCT   = 300  # skip if >300% in window — likely bot manipulation
 MIN_MCAP_USD         = 8_000    # ignore micro-dust coins
 MAX_MCAP_USD         = 80_000   # ignore coins already too pumped to run
