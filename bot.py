@@ -110,10 +110,10 @@ async def main(dry_run: bool) -> None:
         rpc = None
         print("[bot] DRY RUN — monitoring only, no trades will execute")
 
+    print("[bot] v3 STARTING", flush=True)
     print(
-        f"[bot] Watching pump.fun for momentum moves "
-        f"(BC +{config.MIN_BC_RISE_PCT}–{config.MAX_BC_RISE_PCT}pts in {config.MOMENTUM_WINDOW_SEC}s, "
-        f"max BC {config.MAX_BC_PCT}%) …"
+        f"[bot] BC momentum: +{config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}pts/{config.MOMENTUM_WINDOW_SEC}s",
+        flush=True,
     )
 
     queue        = asyncio.Queue()
