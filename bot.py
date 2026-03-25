@@ -54,7 +54,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
         bal_resp    = await rpc.get_balance(keypair.pubkey())
         balance_sol = bal_resp.value / 1_000_000_000
         spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
-        buy_amount  = round(spendable * config.TRADE_PCT, 6)
+        buy_amount  = round(min(spendable * config.TRADE_PCT, config.MAX_TRADE_SOL), 6)
 
         if buy_amount < config.MIN_TRADE_SOL:
             print(f"[bot] Skipping {symbol} — only {spendable:.4f} SOL spendable", flush=True)
