@@ -31,8 +31,17 @@ _bc_history: dict[str, deque] = defaultdict(lambda: deque())
 _signal_times: dict[str, float] = {}
 SIGNAL_COOLDOWN_SEC = 600  # re-allow entry after 10 minutes
 
+# Mints permanently blocked from re-signaling this session (e.g. after stop-loss exit)
+_permanent_blocks: set = set()
+
 _err_count = 0
 _logged_sample = False
+
+
+def block_mint(mint: str) -> None:
+    """Permanently block a mint from re-signaling this session (called after stop-loss exit)."""
+    _permanent_blocks.add(mint)
+    print(f"[monitor] Blocked {mint[:8]}… from re-entry this session", flush=True)
 
 
 def _bc_pct(coin: dict) -> float:
@@ -143,8 +152,10 @@ def _check_momentum(coin: dict) -> tuple[bool, float]:
     readings = [bc for _, bc in history]
     total_rise = readings[-1] - readings[0]
 
-    # Require net rise meets threshold
+    # Require net rise meets threshold but isn't an extreme pump (likely coordinated rug)
     if total_rise < config.MIN_BC_RISE_PCT:
+        return False, total_rise
+    if total_rise > config.MAX_BC_RISE_PCT:
         return False, total_rise
 
     # Require price is still rising NOW — last reading must be higher than 2 readings ago
@@ -190,7 +201,7 @@ async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
 
             for coin in coins:
                 mint = coin.get("mint")
-                if not mint or mint in seen_mints:
+                if not mint or mint in seen_mints or mint in _permanent_blocks:
                     continue
 
                 bc = _bc_pct(coin)
