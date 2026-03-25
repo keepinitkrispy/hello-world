@@ -53,7 +53,7 @@ async def _pumpportal_tx(
         signed_tx = VersionedTransaction(tx.message, [keypair])
         result    = await rpc.send_raw_transaction(
             bytes(signed_tx),
-            opts=TxOpts(skip_preflight=False, preflight_commitment="confirmed"),
+            opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
         return str(result.value)
     except Exception as e:
@@ -99,7 +99,7 @@ async def _jupiter_swap(session, rpc, keypair, quote):
         signed_tx = VersionedTransaction(tx.message, [keypair])
         result    = await rpc.send_raw_transaction(
             bytes(signed_tx),
-            opts=TxOpts(skip_preflight=False, preflight_commitment="confirmed"),
+            opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
         return str(result.value)
     except Exception as e:
