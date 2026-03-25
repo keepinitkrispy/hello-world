@@ -9,6 +9,7 @@ from solana.rpc.async_api import AsyncClient
 import config
 import filters
 import monitor
+import positions
 import trader
 import wallet
 
@@ -22,6 +23,21 @@ def _task_error_handler(task: asyncio.Task) -> None:
             traceback.print_exception(type(exc), exc, exc.__traceback__)
     except asyncio.CancelledError:
         pass
+
+
+async def _monitor_existing(session, rpc, keypair, trade, active):
+    """Sell a position recovered from a previous run as quickly as possible."""
+    symbol = trade.symbol
+    try:
+        print(f"[bot] Recovered position: {symbol} — selling immediately", flush=True)
+        for attempt in range(1, 4):
+            sol_back = await trader.sell(session, rpc, keypair, trade, "RESTART RECOVERY")
+            if sol_back > 0:
+                break
+            await asyncio.sleep(3)
+    finally:
+        positions.remove(trade.mint)
+        active.discard(trade.mint)
 
 
 async def _handle(session, rpc, keypair, coin, dry_run, active):
@@ -48,6 +64,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
         trade = await trader.buy(session, rpc, keypair, mint, symbol, buy_amount)
         if trade is None:
             return
+        positions.record(trade)
 
         peak_pnl    = 0.0
         none_since  = None
@@ -86,6 +103,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
                 break
     finally:
+        positions.remove(mint)
         active.discard(mint)
 
 
@@ -115,6 +133,20 @@ async def main(dry_run: bool) -> None:
     mt.add_done_callback(_task_error_handler)
 
     async with aiohttp.ClientSession() as session:
+        # Recover any positions that survived a restart
+        orphans = positions.load_open()
+        if orphans:
+            print(f"[bot] Recovering {len(orphans)} position(s) from previous run", flush=True)
+        for p in orphans:
+            t = trader.Trade(p["mint"], p["symbol"], p["token_amount"], p["sol_spent"])
+            t._entry_time = p["entry_time"]
+            active_mints.add(p["mint"])
+            seen_mints.add(p["mint"])
+            task = asyncio.create_task(
+                _monitor_existing(session, rpc, kp, t, active_mints),
+                name=f"recover-{p['mint'][:8]}"
+            )
+            task.add_done_callback(_task_error_handler)
         try:
             while True:
                 try:
