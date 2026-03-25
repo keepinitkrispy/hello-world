@@ -10,6 +10,7 @@ import config
 import filters
 import monitor
 import positions
+import profits
 import trader
 import wallet
 
@@ -53,7 +54,8 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
         bal_resp    = await rpc.get_balance(keypair.pubkey())
         balance_sol = bal_resp.value / 1_000_000_000
-        spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
+        parked      = profits.load()
+        spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked)
         buy_amount  = round(min(spendable * config.TRADE_PCT, config.MAX_TRADE_SOL), 6)
 
         if buy_amount < config.MIN_TRADE_SOL:
@@ -66,8 +68,9 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
             return
         positions.record(trade)
 
-        peak_pnl    = 0.0
-        none_since  = None
+        peak_pnl      = 0.0
+        peak_pnl_time = time.time()
+        none_since    = None
         while True:
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
             elapsed = trade.elapsed()
@@ -85,22 +88,34 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                     break
                 continue
             none_since = None
-            pnl      = trade.pnl_pct(value)
-            peak_pnl = max(peak_pnl, pnl)
+            pnl = trade.pnl_pct(value)
+            if pnl > peak_pnl:
+                peak_pnl      = pnl
+                peak_pnl_time = time.time()
             print(f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% held={elapsed:.0f}s", flush=True)
+
+            # Dynamic stop: full -5% for first 30s, tightens to -3% after
+            dyn_stop = config.STOP_LOSS_PCT if elapsed < 30 else max(3.0, config.STOP_LOSS_PCT * 0.6)
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
-                    print(f"[bot] Profit {sol_back - trade.sol_spent:+.4f} SOL parked", flush=True)
+                    gain  = sol_back - trade.sol_spent
+                    total = profits.add(gain)
+                    print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
             elif peak_pnl >= config.TRAIL_ACTIVATE_PCT and pnl <= peak_pnl - config.TRAIL_DRAWDOWN_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)")
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
-                    print(f"[bot] Profit {sol_back - trade.sol_spent:+.4f} SOL parked", flush=True)
+                    gain  = sol_back - trade.sol_spent
+                    total = profits.add(gain)
+                    print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
-            elif pnl <= -config.STOP_LOSS_PCT and elapsed >= 30:
-                await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
+            elif pnl > 0.5 and elapsed >= 20 and time.time() - peak_pnl_time > 30:
+                await trader.sell(session, rpc, keypair, trade, "MOMENTUM STALL")
+                break
+            elif pnl <= -dyn_stop:
+                await trader.sell(session, rpc, keypair, trade, f"STOP LOSS ({dyn_stop:.0f}%)")
                 break
     finally:
         positions.remove(mint)
@@ -114,8 +129,9 @@ async def main(dry_run: bool) -> None:
         rpc          = AsyncClient(config.RPC_URL)
         balance_resp = await rpc.get_balance(kp.pubkey())
         balance_sol  = balance_resp.value / 1_000_000_000
-        spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
-        print(f"[bot] Balance={balance_sol:.4f} SOL spendable={spendable:.4f} SOL", flush=True)
+        parked_total = profits.load()
+        spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked_total)
+        print(f"[bot] Balance={balance_sol:.4f} SOL parked={parked_total:.4f} SOL spendable={spendable:.4f} SOL", flush=True)
         if spendable < config.MIN_TRADE_SOL:
             print(f"[bot] !! Too low — fund {kp.pubkey()} then restart", flush=True)
             sys.exit(1)
