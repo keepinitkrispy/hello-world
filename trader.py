@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import time
 from typing import Optional
@@ -151,24 +152,28 @@ async def sell(
     trade: Trade,
     reason: str,
 ) -> float:
-    """Execute sell. Returns SOL received (0.0 on failure)."""
-    quote = await _quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
-    if not quote:
-        print(f"[trader] No sell quote for {trade.symbol} — retrying next cycle")
-        return 0.0
+    """Execute sell with up to 3 attempts. Returns SOL received (0.0 on failure)."""
+    for attempt in range(1, 4):
+        quote = await _quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
+        if not quote:
+            print(f"[trader] No sell quote for {trade.symbol} (attempt {attempt})", flush=True)
+            await asyncio.sleep(2)
+            continue
 
-    sol_out  = int(quote.get("outAmount", 0)) / LAMPORTS
-    pnl      = trade.pnl_pct(sol_out)
-    net      = sol_out - trade.sol_spent - config.GAS_COST_ROUNDTRIP_SOL
-    print(f"[trader] Selling {trade.symbol} [{reason}] | {sol_out:.4f} SOL | P&L {pnl:+.1f}% (net after gas: {net:+.4f} SOL)")
+        sol_out = int(quote.get("outAmount", 0)) / LAMPORTS
+        pnl     = trade.pnl_pct(sol_out)
+        net     = sol_out - trade.sol_spent - config.GAS_COST_ROUNDTRIP_SOL
+        print(f"[trader] Selling {trade.symbol} [{reason}] attempt {attempt} | {sol_out:.4f} SOL | P&L {pnl:+.1f}% (net: {net:+.4f} SOL)", flush=True)
 
-    sig = await _swap(session, rpc, keypair, quote)
-    if sig:
-        print(f"[trader] Sold {trade.symbol}: {sig}")
-        return sol_out
-    else:
-        print(f"[trader] Sell tx failed for {trade.symbol}")
-        return 0.0
+        sig = await _swap(session, rpc, keypair, quote)
+        if sig:
+            print(f"[trader] Sold {trade.symbol}: {sig}", flush=True)
+            return sol_out
+        print(f"[trader] Sell tx failed for {trade.symbol} (attempt {attempt})", flush=True)
+        await asyncio.sleep(2)
+
+    print(f"[trader] GAVE UP selling {trade.symbol} after 3 attempts — tokens still in wallet", flush=True)
+    return 0.0
 
 
 async def park_profit_in_usdc(
