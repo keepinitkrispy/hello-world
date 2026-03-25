@@ -133,14 +133,31 @@ def _check_momentum(coin: dict) -> tuple[bool, float]:
     while history and history[0][0] < cutoff:
         history.popleft()
 
-    if len(history) < 2:
+    if len(history) < 4:
         return False, 0.0
 
-    rise = bc - history[0][1]
-    if rise >= config.MIN_BC_RISE_PCT:
-        return True, rise
+    readings = [bc for _, bc in history]
+    total_rise = readings[-1] - readings[0]
 
-    return False, rise
+    # Require net rise meets threshold
+    if total_rise < config.MIN_BC_RISE_PCT:
+        return False, total_rise
+
+    # Require price is still rising NOW — last reading must be higher than 2 readings ago
+    # This rejects spike-and-dump: coin pumped 5% then already falling back
+    if readings[-1] <= readings[-3]:
+        return False, total_rise
+
+    # Require majority of intervals are rising (consistent climb, not one spike)
+    rising = sum(1 for i in range(1, len(readings)) if readings[i] > readings[i - 1])
+    if rising < len(readings) * 0.5:
+        return False, total_rise
+
+    # Require at least 1 reply — no community = likely rug
+    if int(coin.get("reply_count") or 0) < 1:
+        return False, total_rise
+
+    return True, total_rise
 
 
 async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
