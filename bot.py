@@ -49,7 +49,8 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
         if trade is None:
             return
 
-        peak_pnl = 0.0
+        peak_pnl    = 0.0
+        none_since  = None
         while True:
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
             elapsed = trade.elapsed()
@@ -60,7 +61,13 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
             value = await trader.current_value_sol(session, trade)
             if value is None:
+                if none_since is None:
+                    none_since = time.time()
+                elif time.time() - none_since >= 30:
+                    await trader.sell(session, rpc, keypair, trade, "NO PRICE 30s")
+                    break
                 continue
+            none_since = None
             pnl      = trade.pnl_pct(value)
             peak_pnl = max(peak_pnl, pnl)
             print(f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% held={elapsed:.0f}s", flush=True)
