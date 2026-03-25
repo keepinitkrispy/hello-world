@@ -32,12 +32,12 @@ _logged_sample = False
 
 
 def _bc_pct(coin: dict) -> float:
-    return float(
-        coin.get("bonding_curve_percentage")
-        or coin.get("bonding_curve_progress")
-        or coin.get("progress")
-        or 0
-    )
+    # pump.fun v1 API has no direct percentage field.
+    # Graduation triggers at ~$69k USD market cap = 100%.
+    usd_mc = coin.get("usd_market_cap") or 0
+    if usd_mc:
+        return min(99.9, float(usd_mc) / 69000 * 100)
+    return 0.0
 
 
 async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
