@@ -51,7 +51,7 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
     """Fetch coins sorted by bonding curve progress descending (near graduation first)."""
     global _err_count
     params = {
-        "sortBy":      "usd_market_cap",
+        "sortBy":      "last_trade_timestamp",
         "order":       "DESC",
         "limit":       50,
         "includeNsfw": "true",
