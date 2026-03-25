@@ -1,9 +1,9 @@
 import time
 from typing import Optional
 
-import aiohttp
 from solana.rpc.async_api import AsyncClient
 
+import aiohttp
 import config
 
 _CLONE_TARGETS = {
@@ -58,21 +58,6 @@ def _is_clone(name: str, symbol: str) -> tuple[bool, str]:
     return False, ""
 
 
-async def _creator_coin_count(session: aiohttp.ClientSession, creator: str) -> int:
-    if not creator:
-        return 0
-    try:
-        async with session.get(
-            "https://frontend-api.pump.fun/coins",
-            params={"creator": creator, "limit": config.MAX_CREATOR_COINS + 1},
-            timeout=aiohttp.ClientTimeout(total=5),
-        ) as resp:
-            data = await resp.json() if resp.status == 200 else []
-            return len(data) if isinstance(data, list) else 0
-    except Exception:
-        return 0
-
-
 async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient], coin: dict) -> tuple[bool, str]:
     symbol = coin.get("symbol", "?")
     name   = coin.get("name", "?")
@@ -91,10 +76,5 @@ async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient],
     if replies < config.MIN_REPLY_COUNT:
         print(f"[filters] SKIP {symbol}: low engagement", flush=True)
         return False, "low engagement"
-
-    count = await _creator_coin_count(session, coin.get("creator", ""))
-    if count > config.MAX_CREATOR_COINS:
-        print(f"[filters] SKIP {symbol}: dev spam ({count} coins)", flush=True)
-        return False, "dev spam"
 
     return True, ""
