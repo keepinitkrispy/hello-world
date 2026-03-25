@@ -1,4 +1,5 @@
 import asyncio
+import base58
 import time
 from typing import Optional
 
@@ -10,10 +11,31 @@ from solana.rpc.types import TxOpts
 
 import config
 
-PUMPPORTAL  = "https://pumpportal.fun/api/trade-local"
+PUMPPORTAL    = "https://pumpportal.fun/api/trade-local"
 JUPITER_QUOTE = "https://lite-api.jup.ag/swap/v1/quote"
 JUPITER_SWAP  = "https://lite-api.jup.ag/swap/v1/swap"
 LAMPORTS      = 1_000_000_000
+
+JITO_ENDPOINT = "https://mainnet.block-engine.jito.labs.io/api/v1/transactions"
+
+
+# ── Jito block engine (parallel fast-lane submission) ─────────────────────────
+
+async def _jito_send(session: aiohttp.ClientSession, signed_tx_bytes: bytes) -> Optional[str]:
+    """Submit a signed transaction to Jito's block engine for priority inclusion."""
+    encoded = base58.b58encode(signed_tx_bytes).decode()
+    body = {"jsonrpc": "2.0", "id": 1, "method": "sendTransaction",
+            "params": [encoded, {"encoding": "base58"}]}
+    try:
+        async with session.post(
+            JITO_ENDPOINT, json=body, timeout=aiohttp.ClientTimeout(total=10)
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("result")
+    except Exception as e:
+        print(f"[trader] Jito send error: {e}", flush=True)
+    return None
 
 
 # ── PumpPortal (primary) ───────────────────────────────────────────────────────
@@ -51,11 +73,28 @@ async def _pumpportal_tx(
 
         tx        = VersionedTransaction.from_bytes(tx_bytes)
         signed_tx = VersionedTransaction(tx.message, [keypair])
-        result    = await rpc.send_raw_transaction(
-            bytes(signed_tx),
+        tx_bytes_signed = bytes(signed_tx)
+
+        # Submit to standard RPC and Jito in parallel; first success wins
+        rpc_coro  = rpc.send_raw_transaction(
+            tx_bytes_signed,
             opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
-        return str(result.value)
+        jito_coro = _jito_send(session, tx_bytes_signed)
+        rpc_task  = asyncio.create_task(rpc_coro)
+        jito_task = asyncio.create_task(jito_coro)
+
+        done, pending = await asyncio.wait(
+            [rpc_task, jito_task], return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
+
+        result = done.pop().result()
+        if result is None:
+            return None
+        # rpc returns a RpcResponse object; jito returns a string sig directly
+        return str(result.value) if hasattr(result, "value") else str(result)
     except Exception as e:
         print(f"[trader] PumpPortal error: {e}", flush=True)
         return None
@@ -201,6 +240,24 @@ async def buy(
 
     print(f"[trader] Bought {symbol}: {sig}", flush=True)
     return Trade(mint, symbol, token_out, amount_sol)
+
+
+async def sell_partial(
+    session:    aiohttp.ClientSession,
+    rpc:        AsyncClient,
+    keypair:    Keypair,
+    trade:      "Trade",
+    pct:        int,
+) -> float:
+    """Sell a percentage of the position. Returns estimated SOL received."""
+    sig = await _pumpportal_tx(
+        session, rpc, keypair, "sell", trade.mint, f"{pct}%", denom_sol=False
+    )
+    if sig:
+        print(f"[trader] Partial sell {pct}% {trade.symbol}: {sig}", flush=True)
+        value = await current_value_sol(session, trade)
+        return (value or 0.0) * pct / 100
+    return 0.0
 
 
 async def sell(

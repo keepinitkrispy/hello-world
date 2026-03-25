@@ -2,6 +2,7 @@ import time
 from typing import Optional
 
 from solana.rpc.async_api import AsyncClient
+from solders.pubkey import Pubkey
 
 import aiohttp
 import config
@@ -58,6 +59,23 @@ def _is_clone(name: str, symbol: str) -> tuple[bool, str]:
     return False, ""
 
 
+async def _check_holder_safety(rpc: AsyncClient, mint: str, coin: dict) -> tuple[bool, str]:
+    """Return (safe, reason). Rejects coins where top wallets hold >50% of supply."""
+    try:
+        resp = await rpc.get_token_largest_accounts(Pubkey.from_string(mint))
+        if not resp.value:
+            return True, ""
+        accounts = resp.value[:10]
+        total_supply = float(coin.get("total_supply") or 1_000_000_000)
+        top3 = sum(float(a.amount.ui_amount or 0) for a in accounts[:3])
+        top3_pct = top3 / total_supply * 100
+        if top3_pct > 50:
+            return False, f"top3 hold {top3_pct:.0f}%"
+        return True, ""
+    except Exception:
+        return True, ""  # allow on RPC error — don't block trades due to infra issues
+
+
 async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient], coin: dict) -> tuple[bool, str]:
     symbol = coin.get("symbol", "?")
     name   = coin.get("name", "?")
@@ -76,5 +94,13 @@ async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient],
     if replies < config.MIN_REPLY_COUNT:
         print(f"[filters] SKIP {symbol}: low engagement", flush=True)
         return False, "low engagement"
+
+    if rpc:
+        mint = coin.get("mint", "")
+        if mint:
+            safe, reason = await _check_holder_safety(rpc, mint, coin)
+            if not safe:
+                print(f"[filters] SKIP {symbol}: holder concentration ({reason})", flush=True)
+                return False, reason
 
     return True, ""

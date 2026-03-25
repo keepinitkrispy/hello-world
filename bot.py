@@ -52,6 +52,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
     trade           = None   # set only after a successful buy
     _position_sold  = False
     _stop_loss_exit = False
+    _partial_sold   = False
     try:
         ok, reason = await filters.passes_all(session, rpc, coin)
         if not ok:
@@ -106,6 +107,14 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
             # Dynamic stop: full -5% for first 30s, tightens to -3% after
             dyn_stop = config.STOP_LOSS_PCT if elapsed < 30 else max(3.0, config.STOP_LOSS_PCT * 0.6)
+
+            if not _partial_sold and pnl >= 10.0:
+                sol_back = await trader.sell_partial(session, rpc, keypair, trade, 50)
+                if sol_back > 0:
+                    _partial_sold = True
+                    trade.token_amount //= 2
+                    trade.sol_spent = 0.0  # remainder is house money
+                    print(f"[bot] Partial sell 50% {symbol} — remainder is house money", flush=True)
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
