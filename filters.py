@@ -67,6 +67,15 @@ async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient],
         print(f"[filters] SKIP {symbol}: too new ({age:.0f}s)", flush=True)
         return False, "too new"
 
+    # Skip stale coins — if last trade was >60s ago the momentum is already dead
+    last_trade = coin.get("last_trade_timestamp") or 0
+    if last_trade > 1e12:
+        last_trade /= 1000
+    if last_trade and (time.time() - last_trade) > 60:
+        stale_s = time.time() - last_trade
+        print(f"[filters] SKIP {symbol}: last trade {stale_s:.0f}s ago", flush=True)
+        return False, "stale"
+
     is_clone, reason = _is_clone(name, symbol)
     if is_clone:
         print(f"[filters] SKIP {symbol}: copy coin {reason}", flush=True)

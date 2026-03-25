@@ -9,6 +9,7 @@ from solana.rpc.async_api import AsyncClient
 import config
 import filters
 import monitor
+import positions
 import trader
 import wallet
 
@@ -24,6 +25,21 @@ def _task_error_handler(task: asyncio.Task) -> None:
         pass
 
 
+async def _monitor_existing(session, rpc, keypair, trade, active):
+    """Sell a position recovered from a previous run as quickly as possible."""
+    symbol = trade.symbol
+    try:
+        print(f"[bot] Recovered position: {symbol} — selling immediately", flush=True)
+        for attempt in range(1, 4):
+            sol_back = await trader.sell(session, rpc, keypair, trade, "RESTART RECOVERY")
+            if sol_back > 0:
+                break
+            await asyncio.sleep(3)
+    finally:
+        positions.remove(trade.mint)
+        active.discard(trade.mint)
+
+
 async def _handle(session, rpc, keypair, coin, dry_run, active):
     mint   = coin.get("mint")
     symbol = coin.get("symbol", "???")
@@ -35,10 +51,32 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
             print(f"[bot] [DRY RUN] PASS {symbol}", flush=True)
             return
 
+        # Pre-buy confirmation: wait 4s, re-fetch, verify BC still climbing
+        signal_bc = monitor._bc_pct(coin)
+        await asyncio.sleep(4)
+        try:
+            async with session.get(
+                f"https://frontend-api-v3.pump.fun/coins/{mint}",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    fresh = await resp.json(content_type=None)
+                    fresh_bc = monitor._bc_pct(fresh)
+                    if fresh_bc <= signal_bc:
+                        print(
+                            f"[bot] ABORT {symbol}: BC stalled/falling at buy time "
+                            f"({signal_bc:.1f}%→{fresh_bc:.1f}%)",
+                            flush=True,
+                        )
+                        return
+                    print(f"[bot] CONFIRMED {symbol}: BC rising {signal_bc:.1f}%→{fresh_bc:.1f}%", flush=True)
+        except Exception:
+            pass  # network hiccup — proceed anyway
+
         bal_resp    = await rpc.get_balance(keypair.pubkey())
         balance_sol = bal_resp.value / 1_000_000_000
         spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
-        buy_amount  = round(spendable * config.TRADE_PCT, 6)
+        buy_amount  = round(min(spendable * config.TRADE_PCT, config.MAX_TRADE_SOL), 6)
 
         if buy_amount < config.MIN_TRADE_SOL:
             print(f"[bot] Skipping {symbol} — only {spendable:.4f} SOL spendable", flush=True)
@@ -48,17 +86,43 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
         trade = await trader.buy(session, rpc, keypair, mint, symbol, buy_amount)
         if trade is None:
             return
+        positions.record(trade)
 
-        peak_pnl = 0.0
+        peak_pnl       = 0.0
+        none_since     = None
+        last_pnl       = None
+        decline_streak = 0
+
         while True:
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
+            elapsed = trade.elapsed()
+
+            if elapsed >= config.MAX_HOLD_SECONDS:
+                await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
+                break
+
             value = await trader.current_value_sol(session, trade)
             if value is None:
+                if none_since is None:
+                    none_since = time.time()
+                elif time.time() - none_since >= 10:
+                    await trader.sell(session, rpc, keypair, trade, "NO PRICE 10s")
+                    break
                 continue
+            none_since = None
             pnl      = trade.pnl_pct(value)
-            elapsed  = trade.elapsed()
             peak_pnl = max(peak_pnl, pnl)
-            print(f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% held={elapsed:.0f}s", flush=True)
+
+            # Track consecutive declines for momentum reversal exit
+            if last_pnl is not None:
+                decline_streak = decline_streak + 1 if pnl < last_pnl else 0
+            last_pnl = pnl
+
+            print(
+                f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% "
+                f"held={elapsed:.0f}s streak={decline_streak}",
+                flush=True,
+            )
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
@@ -70,13 +134,18 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     print(f"[bot] Profit {sol_back - trade.sol_spent:+.4f} SOL parked", flush=True)
                 break
-            elif pnl <= -config.STOP_LOSS_PCT:
-                await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
-                break
-            elif elapsed >= config.MAX_HOLD_SECONDS:
-                await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
-                break
+            else:
+                # Dynamic stop loss: full width first 2 min, tighten to half after that
+                stop = config.STOP_LOSS_PCT if elapsed < 120 else config.STOP_LOSS_PCT / 2
+                if pnl <= -stop and elapsed >= 30:
+                    await trader.sell(session, rpc, keypair, trade, f"STOP LOSS {stop:.0f}%")
+                    break
+                # Momentum reversal: 3 consecutive price drops while in loss (>30s in)
+                if decline_streak >= 3 and pnl < -3 and elapsed >= 30:
+                    await trader.sell(session, rpc, keypair, trade, "MOMENTUM REVERSAL")
+                    break
     finally:
+        positions.remove(mint)
         active.discard(mint)
 
 
@@ -106,6 +175,20 @@ async def main(dry_run: bool) -> None:
     mt.add_done_callback(_task_error_handler)
 
     async with aiohttp.ClientSession() as session:
+        # Recover any positions that survived a restart
+        orphans = positions.load_open()
+        if orphans:
+            print(f"[bot] Recovering {len(orphans)} position(s) from previous run", flush=True)
+        for p in orphans:
+            t = trader.Trade(p["mint"], p["symbol"], p["token_amount"], p["sol_spent"])
+            t._entry_time = p["entry_time"]
+            active_mints.add(p["mint"])
+            seen_mints.add(p["mint"])
+            task = asyncio.create_task(
+                _monitor_existing(session, rpc, kp, t, active_mints),
+                name=f"recover-{p['mint'][:8]}"
+            )
+            task.add_done_callback(_task_error_handler)
         try:
             while True:
                 try:
