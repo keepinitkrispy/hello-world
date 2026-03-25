@@ -3,8 +3,8 @@ import os
 RPC_URL = os.environ.get("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
 KEYPAIR_PATH = "./keypair.json"
 
-TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.30"))
-GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))
+TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.90"))
+GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.01"))
 MIN_TRADE_SOL   = 0.01
 
 MONITOR_BC_MIN      = 1
@@ -23,7 +23,7 @@ POLL_INTERVAL_SEC = 2.0
 
 SLIPPAGE_BPS = 2000
 PRIORITY_FEE = "auto"
-GAS_COST_ROUNDTRIP_SOL = float(os.environ.get("GAS_COST_ROUNDTRIP_SOL", "0.003"))
+GAS_COST_ROUNDTRIP_SOL = float(os.environ.get("GAS_COST_ROUNDTRIP_SOL", "0.002"))
 
 SOL_MINT  = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
