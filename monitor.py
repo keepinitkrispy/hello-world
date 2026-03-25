@@ -27,6 +27,10 @@ _HEADERS = {
 # mint -> deque of (timestamp, bonding_pct) snapshots
 _bc_history: dict[str, deque] = defaultdict(lambda: deque())
 
+# mint -> timestamp of last signal fire (for cooldown)
+_signal_times: dict[str, float] = {}
+SIGNAL_COOLDOWN_SEC = 600  # re-allow entry after 10 minutes
+
 _err_count = 0
 _logged_sample = False
 
@@ -53,7 +57,7 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
     params = {
         "sortBy":      "last_trade_timestamp",
         "order":       "DESC",
-        "limit":       50,
+        "limit":       100,
         "includeNsfw": "true",
     }
     try:
@@ -167,9 +171,16 @@ async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
             coins = await _fetch_zone(session)
             _tick += 1
 
+            # Expire cooled-down mints so coins can re-signal after SIGNAL_COOLDOWN_SEC
+            now = time.time()
+            expired = [m for m, t in _signal_times.items() if now - t > SIGNAL_COOLDOWN_SEC]
+            for m in expired:
+                seen_mints.discard(m)
+                del _signal_times[m]
+
             # Periodic status + sample every 20 ticks
             if _tick % 20 == 1:
-                print(f"[monitor] tick={_tick} zone_coins={len(coins)}", flush=True)
+                print(f"[monitor] tick={_tick} zone_coins={len(coins)} cooled={len(expired)}", flush=True)
                 if coins:
                     s = coins[0]
                     print(
@@ -189,6 +200,7 @@ async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
                 fired, rise = _check_momentum(coin)
                 if fired:
                     seen_mints.add(mint)
+                    _signal_times[mint] = time.time()
                     symbol = coin.get("symbol", "???")
                     print(
                         f"[monitor] SIGNAL {symbol} ({mint[:8]}…) "
