@@ -14,7 +14,7 @@ import aiohttp
 
 import config
 
-PUMPFUN_API = "https://frontend-api.pump.fun/coins"
+PUMPFUN_API = "https://frontend-api-v3.pump.fun/coins"
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -55,7 +55,7 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
     """Fetch coins sorted by bonding curve progress descending (near graduation first)."""
     global _err_count
     params = {
-        "sort":        "last_trade_unix_timestamp",
+        "sortBy":      "last_trade_timestamp",
         "order":       "DESC",
         "limit":       50,
         "includeNsfw": "true",
