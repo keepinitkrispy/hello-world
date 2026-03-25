@@ -93,15 +93,12 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
         await asyncio.sleep(wait)
         return []
 
-    # Filter to the near-graduation zone only
+    # Only skip completed/graduated coins — let Jupiter handle liquidity filtering
     results = []
     for coin in data:
         if not isinstance(coin, dict):
             continue
         if coin.get("complete"):
-            continue
-        bc = _bc_pct(coin)
-        if bc < config.MONITOR_BC_MIN or bc >= config.MONITOR_BC_MAX:
             continue
         results.append(coin)
 
