@@ -80,7 +80,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
             if value is None:
                 if none_since is None:
                     none_since = time.time()
-                elif time.time() - none_since >= 30:
+                elif time.time() - none_since >= 10:
                     await trader.sell(session, rpc, keypair, trade, "NO PRICE 30s")
                     break
                 continue

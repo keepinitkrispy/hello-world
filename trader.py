@@ -134,15 +134,37 @@ async def buy(
     return Trade(mint, symbol, token_out, amount_sol)
 
 
+async def _pumpfun_value_sol(
+    session: aiohttp.ClientSession,
+    trade: Trade,
+) -> Optional[float]:
+    """Derive position value from pump.fun bonding curve reserves (no Jupiter needed)."""
+    url = f"https://frontend-api-v3.pump.fun/coins/{trade.mint}"
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status != 200:
+                return None
+            coin = await resp.json(content_type=None)
+        vsol = coin.get("virtual_sol_reserves") or 0
+        vtok = coin.get("virtual_token_reserves") or 0
+        if not vsol or not vtok:
+            return None
+        # price_per_raw_token (lamports) = vsol / vtok
+        value_lamports = (vsol / vtok) * trade.token_amount
+        return value_lamports / LAMPORTS
+    except Exception:
+        return None
+
+
 async def current_value_sol(
     session: aiohttp.ClientSession,
     trade: Trade,
 ) -> Optional[float]:
-    """Get a sell quote to find current SOL value of our position."""
+    """Get current SOL value of position. Jupiter first, pump.fun curve as fallback."""
     quote = await _quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
-    if not quote:
-        return None
-    return int(quote.get("outAmount", 0)) / LAMPORTS
+    if quote:
+        return int(quote.get("outAmount", 0)) / LAMPORTS
+    return await _pumpfun_value_sol(session, trade)
 
 
 async def sell(
