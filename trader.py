@@ -160,11 +160,14 @@ async def current_value_sol(
     session: aiohttp.ClientSession,
     trade: Trade,
 ) -> Optional[float]:
-    """Get current SOL value of position. Jupiter first, pump.fun curve as fallback."""
+    """Get current SOL value of position. pump.fun curve first, Jupiter for graduated tokens."""
+    value = await _pumpfun_value_sol(session, trade)
+    if value is not None:
+        return value
     quote = await _quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
     if quote:
         return int(quote.get("outAmount", 0)) / LAMPORTS
-    return await _pumpfun_value_sol(session, trade)
+    return None
 
 
 async def sell(
