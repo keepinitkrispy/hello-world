@@ -52,11 +52,16 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
         peak_pnl = 0.0
         while True:
             await asyncio.sleep(config.POLL_INTERVAL_SEC)
+            elapsed = trade.elapsed()
+
+            if elapsed >= config.MAX_HOLD_SECONDS:
+                await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
+                break
+
             value = await trader.current_value_sol(session, trade)
             if value is None:
                 continue
             pnl      = trade.pnl_pct(value)
-            elapsed  = trade.elapsed()
             peak_pnl = max(peak_pnl, pnl)
             print(f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% held={elapsed:.0f}s", flush=True)
 
@@ -72,9 +77,6 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 break
             elif pnl <= -config.STOP_LOSS_PCT:
                 await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
-                break
-            elif elapsed >= config.MAX_HOLD_SECONDS:
-                await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
                 break
     finally:
         active.discard(mint)
