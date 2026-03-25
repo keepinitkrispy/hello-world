@@ -99,7 +99,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     print(f"[bot] Profit {sol_back - trade.sol_spent:+.4f} SOL parked", flush=True)
                 break
-            elif pnl <= -config.STOP_LOSS_PCT:
+            elif pnl <= -config.STOP_LOSS_PCT and elapsed >= 30:
                 await trader.sell(session, rpc, keypair, trade, "STOP LOSS")
                 break
     finally:
