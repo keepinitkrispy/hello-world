@@ -14,7 +14,7 @@ import aiohttp
 
 import config
 
-PUMPFUN_API = "https://frontend-api-v3.pump.fun/coins"
+PUMPFUN_API = "https://frontend-api.pump.fun/coins"
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -28,6 +28,7 @@ _HEADERS = {
 _bc_history: dict[str, deque] = defaultdict(lambda: deque())
 
 _err_count = 0
+_logged_sample = False
 
 
 def _bc_pct(coin: dict) -> float:
@@ -81,8 +82,12 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
 
             # Log BC distribution to verify field names and zone coverage
             if data:
+                global _logged_sample
                 bcs = sorted([_bc_pct(c) for c in data if isinstance(c, dict)], reverse=True)
-                print(f"[monitor] API ok — {len(data)} coins | BC range: {bcs[-1]:.1f}%-{bcs[0]:.1f}% | sample fields: {list(data[0].keys())[:8]}", flush=True)
+                print(f"[monitor] API ok — {len(data)} coins | BC range: {bcs[-1]:.1f}%-{bcs[0]:.1f}%", flush=True)
+                if not _logged_sample:
+                    _logged_sample = True
+                    print(f"[monitor] first coin raw: {data[0]}", flush=True)
             else:
                 print(f"[monitor] API ok — 0 coins returned", flush=True)
 
