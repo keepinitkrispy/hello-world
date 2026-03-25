@@ -10,8 +10,8 @@ from solana.rpc.types import TxOpts
 
 import config
 
-JUPITER_QUOTE = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP  = "https://quote-api.jup.ag/v6/swap"
+JUPITER_QUOTE = "https://lite-api.jup.ag/swap/v1/quote"
+JUPITER_SWAP  = "https://lite-api.jup.ag/swap/v1/swap"
 LAMPORTS      = 1_000_000_000
 
 

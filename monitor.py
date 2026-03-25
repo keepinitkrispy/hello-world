@@ -55,7 +55,7 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
     """Fetch coins sorted by bonding curve progress descending (near graduation first)."""
     global _err_count
     params = {
-        "sortBy":      "last_trade_timestamp",
+        "sortBy":      "usd_market_cap",
         "order":       "DESC",
         "limit":       50,
         "includeNsfw": "true",
@@ -167,6 +167,10 @@ async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
             for coin in coins:
                 mint = coin.get("mint")
                 if not mint or mint in seen_mints:
+                    continue
+
+                bc = _bc_pct(coin)
+                if not (config.MONITOR_BC_MIN <= bc <= config.MONITOR_BC_MAX):
                     continue
 
                 fired, rise = _check_momentum(coin)
