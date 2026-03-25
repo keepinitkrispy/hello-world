@@ -32,17 +32,13 @@ _logged_sample = False
 
 
 def _bc_pct(coin: dict) -> float:
-    # Preferred: direct USD market-cap field (graduation ≈ $69k)
-    usd_mc = coin.get("usd_market_cap") or 0
-    if usd_mc:
-        return min(99.9, float(usd_mc) / 69_000 * 100)
-
-    # Fallback 1: real_sol_reserves in lamports — graduation ≈ 85 SOL
+    # Graduation = 85 SOL real reserves (confirmed from live completed coin data).
+    # Use real_sol_reserves as primary — price-independent ground truth.
     real_sol = coin.get("real_sol_reserves") or 0
     if real_sol:
         return min(99.9, float(real_sol) / 85e9 * 100)
 
-    # Fallback 2: virtual_sol_reserves — pump.fun inits at 30 SOL, graduates ~115 SOL
+    # Fallback: virtual_sol_reserves — pump.fun inits at 30 SOL, graduates at 115 SOL
     vsol = coin.get("virtual_sol_reserves") or 0
     if vsol:
         pct = (float(vsol) - 30e9) / 85e9 * 100

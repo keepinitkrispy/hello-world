@@ -7,7 +7,7 @@ TRADE_PCT       = float(os.environ.get("TRADE_PCT", "0.30"))
 GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.05"))
 MIN_TRADE_SOL   = 0.01
 
-MONITOR_BC_MIN      = 65
+MONITOR_BC_MIN      = 1
 MONITOR_BC_MAX      = 88
 MOMENTUM_WINDOW_SEC = 10
 MIN_BC_RISE_PCT     = 1
