@@ -20,7 +20,9 @@ MAX_HOLD_SECONDS  = 90
 TRAIL_ACTIVATE_PCT = 5
 TRAIL_DRAWDOWN_PCT = 5
 
-POLL_INTERVAL_SEC = 2.0
+POLL_INTERVAL_SEC    = 2.0   # monitor fetch interval
+POSITION_POLL_SEC    = 0.5   # position P&L check interval (faster to catch rugs)
+MAX_BC_RISE_PCT      = 20.0  # reject signals with extreme pumps (likely coordinated rug setup)
 
 SLIPPAGE_BPS = 2000
 PRIORITY_FEE = "auto"

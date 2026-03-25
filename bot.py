@@ -29,21 +29,29 @@ def _task_error_handler(task: asyncio.Task) -> None:
 async def _monitor_existing(session, rpc, keypair, trade, active):
     """Sell a position recovered from a previous run as quickly as possible."""
     symbol = trade.symbol
+    _sold = False
     try:
         print(f"[bot] Recovered position: {symbol} — selling immediately", flush=True)
         for attempt in range(1, 4):
             sol_back = await trader.sell(session, rpc, keypair, trade, "RESTART RECOVERY")
             if sol_back > 0:
+                _sold = True
                 break
             await asyncio.sleep(3)
+        if not _sold:
+            print(f"[bot] Recovery sell failed for {symbol} — keeping in positions.json", flush=True)
     finally:
-        positions.remove(trade.mint)
+        if _sold:
+            positions.remove(trade.mint)
         active.discard(trade.mint)
 
 
 async def _handle(session, rpc, keypair, coin, dry_run, active):
     mint   = coin.get("mint")
     symbol = coin.get("symbol", "???")
+    trade           = None   # set only after a successful buy
+    _position_sold  = False
+    _stop_loss_exit = False
     try:
         ok, reason = await filters.passes_all(session, rpc, coin)
         if not ok:
@@ -72,11 +80,12 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
         peak_pnl_time = time.time()
         none_since    = None
         while True:
-            await asyncio.sleep(config.POLL_INTERVAL_SEC)
+            await asyncio.sleep(config.POSITION_POLL_SEC)
             elapsed = trade.elapsed()
 
             if elapsed >= config.MAX_HOLD_SECONDS:
-                await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
+                sol_back = await trader.sell(session, rpc, keypair, trade, "TIME LIMIT")
+                _position_sold = sol_back > 0
                 break
 
             value = await trader.current_value_sol(session, trade)
@@ -84,7 +93,8 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 if none_since is None:
                     none_since = time.time()
                 elif time.time() - none_since >= 10:
-                    await trader.sell(session, rpc, keypair, trade, "NO PRICE 30s")
+                    sol_back = await trader.sell(session, rpc, keypair, trade, "NO PRICE 30s")
+                    _position_sold = sol_back > 0
                     break
                 continue
             none_since = None
@@ -99,6 +109,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
+                _position_sold = sol_back > 0
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     gain  = sol_back - trade.sol_spent
                     total = profits.add(gain)
@@ -106,20 +117,30 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 break
             elif peak_pnl >= config.TRAIL_ACTIVATE_PCT and pnl <= peak_pnl - config.TRAIL_DRAWDOWN_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)")
+                _position_sold = sol_back > 0
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     gain  = sol_back - trade.sol_spent
                     total = profits.add(gain)
                     print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
             elif pnl > 0.5 and elapsed >= 20 and time.time() - peak_pnl_time > 30:
-                await trader.sell(session, rpc, keypair, trade, "MOMENTUM STALL")
+                sol_back = await trader.sell(session, rpc, keypair, trade, "MOMENTUM STALL")
+                _position_sold = sol_back > 0
                 break
             elif pnl <= -dyn_stop:
-                await trader.sell(session, rpc, keypair, trade, f"STOP LOSS ({dyn_stop:.0f}%)")
+                _stop_loss_exit = True
+                sol_back = await trader.sell(session, rpc, keypair, trade, f"STOP LOSS ({dyn_stop:.0f}%)")
+                _position_sold = sol_back > 0
                 break
     finally:
-        positions.remove(mint)
+        if _position_sold:
+            positions.remove(mint)
+        elif trade is not None:
+            # Buy succeeded but all sell attempts failed — keep in positions.json for recovery
+            print(f"[bot] Sell failed for {symbol} — position kept in positions.json for recovery", flush=True)
         active.discard(mint)
+        if _stop_loss_exit:
+            monitor.block_mint(mint)
 
 
 async def main(dry_run: bool) -> None:
