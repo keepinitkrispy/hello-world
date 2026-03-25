@@ -32,11 +32,22 @@ _logged_sample = False
 
 
 def _bc_pct(coin: dict) -> float:
-    # pump.fun v1 API has no direct percentage field.
-    # Graduation triggers at ~$69k USD market cap = 100%.
+    # Preferred: direct USD market-cap field (graduation ≈ $69k)
     usd_mc = coin.get("usd_market_cap") or 0
     if usd_mc:
-        return min(99.9, float(usd_mc) / 69000 * 100)
+        return min(99.9, float(usd_mc) / 69_000 * 100)
+
+    # Fallback 1: real_sol_reserves in lamports — graduation ≈ 85 SOL
+    real_sol = coin.get("real_sol_reserves") or 0
+    if real_sol:
+        return min(99.9, float(real_sol) / 85e9 * 100)
+
+    # Fallback 2: virtual_sol_reserves — pump.fun inits at 30 SOL, graduates ~115 SOL
+    vsol = coin.get("virtual_sol_reserves") or 0
+    if vsol:
+        pct = (float(vsol) - 30e9) / 85e9 * 100
+        return max(0.0, min(99.9, pct))
+
     return 0.0
 
 
@@ -87,7 +98,9 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
                 print(f"[monitor] API ok — {len(data)} coins | BC range: {bcs[-1]:.1f}%-{bcs[0]:.1f}%", flush=True)
                 if not _logged_sample:
                     _logged_sample = True
-                    print(f"[monitor] first coin raw: {data[0]}", flush=True)
+                    print("[monitor] first coin keys+values:", flush=True)
+                    for k, v in data[0].items():
+                        print(f"  {k}: {v!r}", flush=True)
             else:
                 print(f"[monitor] API ok — 0 coins returned", flush=True)
 
