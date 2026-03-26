@@ -41,6 +41,8 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 PARK_PROFITS = False  # let profits compound into larger trade sizes
 
+MAX_CONCURRENT_POSITIONS = 1  # only one open trade at a time — prevents stack blowup
+
 MAX_CREATOR_COINS   = 4
 MIN_REPLY_COUNT     = 3    # raised from 1 — require actual engagement
 MIN_AGE_SECONDS     = 30   # raised from 5 — dev dump window is first 30s

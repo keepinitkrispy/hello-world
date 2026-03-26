@@ -252,6 +252,12 @@ async def main(dry_run: bool) -> None:
 
                 mint = coin.get("mint")
                 if mint and mint not in active_mints:
+                    if len(active_mints) >= config.MAX_CONCURRENT_POSITIONS:
+                        print(
+                            f"[bot] Skipping {mint[:8]}… — {len(active_mints)} position(s) already open",
+                            flush=True,
+                        )
+                        continue
                     active_mints.add(mint)
                     t = asyncio.create_task(
                         _handle(session, rpc, kp, coin, dry_run, active_mints),
