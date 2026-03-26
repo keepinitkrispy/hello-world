@@ -39,7 +39,7 @@ GAS_COST_ROUNDTRIP_SOL = float(os.environ.get("GAS_COST_ROUNDTRIP_SOL", "0.002")
 SOL_MINT  = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-PARK_PROFITS = True
+PARK_PROFITS = False  # let profits compound into larger trade sizes
 
 MAX_CREATOR_COINS   = 4
 MIN_REPLY_COUNT     = 3    # raised from 1 — require actual engagement
