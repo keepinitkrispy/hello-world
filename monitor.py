@@ -137,10 +137,10 @@ async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
         new   = [m for m in mints if m not in _subscribed]
         if new:
             await _subscribe(ws, new)
-            print(
-                f"[monitor] Zone poll: +{len(new)} new subscriptions ({len(_subscribed)} total)",
-                flush=True,
-            )
+        print(
+            f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total)",
+            flush=True,
+        )
         await asyncio.sleep(5)
 
 
