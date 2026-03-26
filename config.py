@@ -5,7 +5,7 @@ KEYPAIR_PATH = "./keypair.json"
 
 TRADE_PCT = float(os.environ.get("TRADE_PCT", "0.15"))
 GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.01"))
-MAX_TRADE_SOL = float(os.environ.get("MAX_TRADE_SOL", "0.1"))
+MAX_TRADE_SOL = float(os.environ.get("MAX_TRADE_SOL", "0.2"))
 MIN_TRADE_SOL = 0.015
 
 # Near-graduation zone only. Coins here have real liquidity and real momentum.
