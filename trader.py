@@ -26,6 +26,7 @@ async def _pumpportal_tx(
     mint:      str,
     amount,
     denom_sol: bool,
+    slippage:  int = 15,
 ) -> Optional[str]:
     data = {
         "publicKey":        str(keypair.pubkey()),
@@ -33,7 +34,7 @@ async def _pumpportal_tx(
         "mint":             mint,
         "denominatedInSol": "true" if denom_sol else "false",
         "amount":           amount,
-        "slippage":         15,
+        "slippage":         slippage,
         "priorityFee":      config.PRIORITY_FEE_LAMPORTS / LAMPORTS,  # PumpPortal takes SOL float
         "pool":             "pump",
     }
@@ -63,12 +64,12 @@ async def _pumpportal_tx(
 
 # ── Jupiter (fallback for graduated tokens) ───────────────────────────────────
 
-async def _jupiter_quote(session, input_mint, output_mint, amount):
+async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps: int = None):
     params = {
         "inputMint":   input_mint,
         "outputMint":  output_mint,
         "amount":      str(amount),
-        "slippageBps": str(config.SLIPPAGE_BPS),
+        "slippageBps": str(slippage_bps if slippage_bps is not None else config.SLIPPAGE_BPS),
     }
     try:
         async with session.get(
@@ -261,9 +262,12 @@ async def sell(
 
     bal_before = await _get_sol_balance(rpc, keypair)
 
+    sell_slippage_pct = config.SELL_SLIPPAGE_BPS // 100
+
     for attempt in range(1, 4):
         # Jupiter first — works for both bonding-curve and graduated tokens
-        quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
+        quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, trade.token_amount,
+                                     slippage_bps=config.SELL_SLIPPAGE_BPS)
         if quote:
             sol_out = await _jupiter_swap(session, rpc, keypair, quote)
             if sol_out is not None and sol_out > 0.001:
@@ -273,7 +277,8 @@ async def sell(
         # PumpPortal fallback
         print(f"[trader] Jupiter sell attempt {attempt} failed, trying PumpPortal…", flush=True)
         sig = await _pumpportal_tx(
-            session, rpc, keypair, "sell", trade.mint, "100%", denom_sol=False
+            session, rpc, keypair, "sell", trade.mint, "100%", denom_sol=False,
+            slippage=sell_slippage_pct,
         )
         if sig:
             await asyncio.sleep(2)
@@ -323,7 +328,8 @@ async def sell_partial(
     )
 
     # Jupiter first
-    quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, tokens_to_sell)
+    quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, tokens_to_sell,
+                                  slippage_bps=config.SELL_SLIPPAGE_BPS)
     if quote:
         sol_out = await _jupiter_swap(session, rpc, keypair, quote)
         if sol_out is not None and sol_out > 0.001:
@@ -338,7 +344,8 @@ async def sell_partial(
     # PumpPortal fallback
     bal_before = await _get_sol_balance(rpc, keypair)
     sig = await _pumpportal_tx(
-        session, rpc, keypair, "sell", trade.mint, tokens_to_sell, denom_sol=False
+        session, rpc, keypair, "sell", trade.mint, tokens_to_sell, denom_sol=False,
+        slippage=config.SELL_SLIPPAGE_BPS // 100,
     )
     if sig:
         await asyncio.sleep(2)
