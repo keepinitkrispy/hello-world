@@ -80,7 +80,7 @@ async def _jupiter_quote(session, input_mint, output_mint, amount):
 
 
 async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[float]:
-    """Execute Jupiter swap. Returns SOL received on success, None on failure."""
+    """Execute Jupiter swap. Returns SOL received (balance delta) on success, None on failure."""
     import base64
     body = {
         "quoteResponse":             quote,
@@ -100,12 +100,19 @@ async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[float]:
         tx_bytes  = base64.b64decode(data["swapTransaction"])
         tx        = VersionedTransaction.from_bytes(tx_bytes)
         signed_tx = VersionedTransaction(tx.message, [keypair])
+        bal_before = await _get_sol_balance(rpc, keypair)
         result    = await rpc.send_raw_transaction(
             bytes(signed_tx),
             opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
         print(f"[trader] Jupiter tx submitted: {result.value}", flush=True)
-        return int(quote.get("outAmount", 0)) / LAMPORTS
+        await asyncio.sleep(3)
+        bal_after = await _get_sol_balance(rpc, keypair)
+        sol_received = bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 2
+        if sol_received > 0.001:
+            return sol_received
+        print(f"[trader] Jupiter tx landed but balance unchanged — tx likely failed", flush=True)
+        return None
     except Exception as e:
         print(f"[trader] Jupiter error: {e}", flush=True)
         return None

@@ -10,7 +10,7 @@ MIN_TRADE_SOL = 0.015
 
 # Near-graduation zone only. Coins here have real liquidity and real momentum.
 # 1% was watching the entire curve — mostly noise with no graduation pressure.
-MONITOR_BC_MIN = 30
+MONITOR_BC_MIN = 50        # raised from 30 — real momentum + exit liquidity starts here
 MONITOR_BC_MAX = 88
 
 MOMENTUM_WINDOW_SEC = 15
@@ -18,11 +18,11 @@ MIN_BC_RISE_PCT = 3.0
 MAX_BC_RISE_PCT = 15.0  # reject coordinated pump signals
 
 PROFIT_TARGET_PCT = 8
-STOP_LOSS_PCT = 5
-MAX_HOLD_SECONDS = 90
+STOP_LOSS_PCT = 4          # tightened from 5 — cut losses faster
+MAX_HOLD_SECONDS = 60      # reduced from 90 — dead coins don't recover
 
 TRAIL_ACTIVATE_PCT = 5
-TRAIL_DRAWDOWN_PCT = 3  # tightened from 5 — don't give back that much off peak
+TRAIL_DRAWDOWN_PCT = 2     # tightened from 3 — don't give back gains
 
 POLL_INTERVAL_SEC = 2.0
 POSITION_POLL_SEC = 0.5
@@ -41,11 +41,9 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 PARK_PROFITS = True
 
 MAX_CREATOR_COINS   = 4
-MIN_REPLY_COUNT     = 1
-MIN_AGE_SECONDS     = 5
-COPY_SIMILARITY_PCT = 80
+MIN_REPLY_COUNT     = 3    # raised from 1 — require actual engagement
+MIN_AGE_SECONDS     = 30   # raised from 5 — dev dump window is first 30s
+COPY_SIMILARITY_PCT = 70   # lowered from 80 — catch more clone variants
 
 # Momentum stall: exit if peak P&L hasn't been refreshed in this many seconds
-# regardless of whether we're in profit. Sitting on a dead position bleeds gas
-# and blocks capital. Reduced from the implicit ~30s to 20s.
-MOMENTUM_STALL_PEAK_AGE_SEC = 20
+MOMENTUM_STALL_PEAK_AGE_SEC = 10  # reduced from 20 — exit dead coins faster

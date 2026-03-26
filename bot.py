@@ -135,8 +135,8 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 # Continue managing the remaining 50%
                 continue
 
-            # Dynamic stop: full -5% for first 30s, tightens to -3% after
-            dyn_stop = config.STOP_LOSS_PCT if elapsed < 30 else max(3.0, config.STOP_LOSS_PCT * 0.6)
+            # Dynamic stop: full stop for first 15s, tightens to 3% after
+            dyn_stop = config.STOP_LOSS_PCT if elapsed < 15 else 3.0
 
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
