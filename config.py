@@ -15,14 +15,14 @@ MONITOR_BC_MAX = float(os.environ.get("MONITOR_BC_MAX", "88"))
 
 MONITOR_CONSECUTIVE_BUYS = int(os.environ.get("MONITOR_CONSECUTIVE_BUYS", "2"))
 MOMENTUM_WINDOW_SEC = int(os.environ.get("MOMENTUM_WINDOW_SEC", "10"))
-MIN_BC_RISE_PCT = float(os.environ.get("MIN_BC_RISE_PCT", "1.5"))
+MIN_BC_RISE_PCT = float(os.environ.get("MIN_BC_RISE_PCT", "2.0"))
 MAX_BC_RISE_PCT = float(os.environ.get("MAX_BC_RISE_PCT", "15.0"))  # reject coordinated pump signals
 
-PROFIT_TARGET_PCT = 20
-STOP_LOSS_PCT = 7
-MAX_HOLD_SECONDS = 180
+PROFIT_TARGET_PCT = 25
+STOP_LOSS_PCT = 8
+MAX_HOLD_SECONDS = 120
 
-TRAIL_ACTIVATE_PCT = 10
+TRAIL_ACTIVATE_PCT = 12
 TRAIL_DRAWDOWN_PCT = 3
 
 POLL_INTERVAL_SEC = 2.0
