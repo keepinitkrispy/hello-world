@@ -144,13 +144,39 @@ async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
         await asyncio.sleep(5)
 
 
-async def _handle_event(
+async def _enqueue_signal(
+    mint:       str,
+    bc_pct:     float,
+    bc_rise:    float,
+    symbol_hint: str,
+    session:    aiohttp.ClientSession,
+    queue:      asyncio.Queue,
+    seen_mints: set,
+) -> None:
+    """Background task: fetch full coin data then enqueue signal. Never blocks the WS loop."""
+    coin = await _fetch_coin(session, mint)
+    if not coin:
+        # Remove from seen_mints so the mint can signal again on next qualifying buy
+        seen_mints.discard(mint)
+        return
+
+    symbol = coin.get("symbol") or symbol_hint or "???"
+    print(
+        f"[monitor] WS SIGNAL {symbol} ({mint[:8]}…) "
+        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | {CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
+        flush=True,
+    )
+    await queue.put(coin)
+
+
+def _handle_event(
     event:      dict,
     ws,
     session:    aiohttp.ClientSession,
     queue:      asyncio.Queue,
     seen_mints: set,
 ) -> None:
+    """Synchronous fast-path: update buy history, fire signal as background task if conditions met."""
     mint    = event.get("mint")
     tx_type = event.get("txType")  # "buy" | "sell" | "create"
 
@@ -161,7 +187,7 @@ async def _handle_event(
     if tx_type == "create" and mint not in _subscribed:
         v_sol = float(event.get("vSolInBondingCurve") or 0)
         if config.MONITOR_BC_MIN <= _bc_from_vsol(v_sol) <= config.MONITOR_BC_MAX:
-            await _subscribe(ws, [mint])
+            asyncio.create_task(_subscribe(ws, [mint]))
 
     if tx_type != "buy":
         return
@@ -196,21 +222,15 @@ async def _handle_event(
     if bc_rise < config.MIN_BC_RISE_PCT or bc_rise > config.MAX_BC_RISE_PCT:
         return
 
-    # Fetch full coin data so all filters (age, replies, name, holder check) can run
-    coin = await _fetch_coin(session, mint)
-    if not coin:
-        return
-
-    symbol = coin.get("symbol") or event.get("symbol") or "???"
-    print(
-        f"[monitor] WS SIGNAL {symbol} ({mint[:8]}…) "
-        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | {CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
-        flush=True,
-    )
-
+    # Mark as seen immediately (prevents duplicate tasks for this mint)
     seen_mints.add(mint)
     _signal_times[mint] = now
-    await queue.put(coin)
+
+    # Fetch coin data and enqueue in a background task — never blocks the WS loop
+    symbol_hint = event.get("symbol") or ""
+    asyncio.create_task(
+        _enqueue_signal(mint, bc_pct, bc_rise, symbol_hint, session, queue, seen_mints)
+    )
 
 
 async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
@@ -239,7 +259,7 @@ async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
                             seen_mints.discard(m)
                             del _signal_times[m]
 
-                        await _handle_event(event, ws, session, queue, seen_mints)
+                        _handle_event(event, ws, session, queue, seen_mints)
 
                     elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
                         print(f"[monitor] WS disconnected: {msg.data}", flush=True)

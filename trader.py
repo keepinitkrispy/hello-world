@@ -152,7 +152,12 @@ async def _pumpfun_value_sol(session: aiohttp.ClientSession, trade: Trade) -> Op
         vtok = coin.get("virtual_token_reserves") or 0
         if not vsol or not vtok:
             return None
-        return (vsol / vtok) * trade.token_amount / LAMPORTS
+        # AMM constant-product output: how much SOL selling token_amount into the pool returns.
+        # This accounts for price impact, unlike the spot-price formula (vsol/vtok)*amount.
+        k = vsol * vtok
+        vtok_after = vtok + trade.token_amount
+        vsol_after = k / vtok_after
+        return (vsol - vsol_after) / LAMPORTS
     except Exception:
         return None
 

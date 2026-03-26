@@ -27,8 +27,8 @@ TRAIL_DRAWDOWN_PCT = 2     # tightened from 3 — don't give back gains
 POLL_INTERVAL_SEC = 2.0
 POSITION_POLL_SEC = 0.5
 
-SLIPPAGE_BPS = 2000       # buys: don't overpay on entry
-SELL_SLIPPAGE_BPS = 5000  # sells: guarantee execution over fill quality
+SLIPPAGE_BPS = 2000      # buys: don't overpay on entry
+SELL_SLIPPAGE_BPS = 300  # sells: 3% — tight enough to avoid MEV, wide enough to fill
 
 # Priority fee in lamports (integer). "auto" is not a valid Jupiter parameter.
 # 0.001 SOL = 1_000_000 lamports. Use this everywhere.

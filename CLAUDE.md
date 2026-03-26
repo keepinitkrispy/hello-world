@@ -6,7 +6,7 @@ This is a Solana pump.fun momentum trading bot. It monitors the PumpPortal WebSo
 
 - Hosted on **Railway.app**, auto-deploys from **master branch**
 - Always push to master (directly or via merge) to deploy
-- Use branch `claude/fix-duplicate-coin-trades-N7vHu` for development, then merge to master
+- Use branch `claude/debug-solana-trader-bot-iZVpf` for development, then merge to master
 - Do NOT create PRs expecting auto-merge — merge manually every time
 
 ## Architecture
@@ -34,18 +34,19 @@ This is a Solana pump.fun momentum trading bot. It monitors the PumpPortal WebSo
 ## Config Values — Current + Rationale
 
 ```python
-MONITOR_BC_MIN = 30       # was 65, lowered because API only returns 0-27% coins at top
+MONITOR_BC_MIN = 50       # raised from 30 — real momentum + exit liquidity starts here
 MONITOR_BC_MAX = 88       # stop before graduation (liquidity risk)
 MIN_BC_RISE_PCT = 3.0     # NEVER lower below 2.0 — 1.0 caused buying on noise (FOREVER rug)
 MAX_BC_RISE_PCT = 15.0    # reject coordinated pump-and-dumps (ODYSSEY was +42pts spike)
 PROFIT_TARGET_PCT = 8     # take profit at +8%
-STOP_LOSS_PCT = 5         # stop loss at -5% (tightens to -3% after 30s)
+STOP_LOSS_PCT = 4         # stop loss at -4% (tightens to -3% after 15s)
 TRAIL_ACTIVATE_PCT = 5    # start trailing at +5% peak
-TRAIL_DRAWDOWN_PCT = 3    # exit if drops 3pts off peak
-MAX_HOLD_SECONDS = 90     # force sell after 90s regardless
-MOMENTUM_STALL_PEAK_AGE_SEC = 20  # exit if no new peak for 20s
+TRAIL_DRAWDOWN_PCT = 2    # exit if drops 2pts off peak (tightened from 3)
+MAX_HOLD_SECONDS = 60     # force sell after 60s regardless (reduced from 90)
+MOMENTUM_STALL_PEAK_AGE_SEC = 10  # exit if no new peak for 10s (reduced from 20)
 POSITION_POLL_SEC = 0.5   # check position value every 500ms
 PRIORITY_FEE_LAMPORTS = 1_000_000  # 0.001 SOL — "auto" is NOT valid for Jupiter
+SELL_SLIPPAGE_BPS = 300   # 3% — NEVER set above 500; 5000 caused catastrophic MEV losses
 ```
 
 ## Bugs Fixed (Do Not Reintroduce)
@@ -86,6 +87,22 @@ PRIORITY_FEE_LAMPORTS = 1_000_000  # 0.001 SOL — "auto" is NOT valid for Jupit
 **Problem:** Code existed but was never deployed (PR was merged at wrong commit).
 **Fix:** Always merge directly to master. The `_half_sold` flag on Trade + `sell_partial()` at +10% P&L is live.
 
+### 10. 50% sell slippage — catastrophic MEV losses
+**Problem:** `SELL_SLIPPAGE_BPS = 5000` allowed Jupiter to fill exits up to 50% worse than quoted. Bot showed +8% P&L but sold into -40% fills.
+**Fix:** `SELL_SLIPPAGE_BPS = 300` (3%). If a fill can't execute within 3% of quote, retry via PumpPortal fallback.
+
+### 11. `_fetch_coin` blocked the WebSocket event loop
+**Problem:** The HTTP call to fetch full coin data was awaited inline in the WS message handler. All incoming trade events were buffered unprocessed for up to 5s while the HTTP call ran. By the time the buy executed, the pump had peaked.
+**Fix:** Signal detection (buy history, BC rise check) stays synchronous. Once conditions are met, `asyncio.create_task(_enqueue_signal(...))` fetches coin data and queues the signal without ever blocking the WS loop.
+
+### 12. P&L used spot price instead of actual AMM output
+**Problem:** `current_value_sol` used `(vsol/vtok) * token_amount / LAMPORTS` — the marginal price assuming zero sell size. This ignored price impact and always overstated position value.
+**Fix:** Uses constant-product AMM formula: `sol_out = vsol - (vsol * vtok) / (vtok + token_amount)`. This is what a sell would actually return.
+
+### 13. positions.json not updated after partial sell
+**Problem:** After house-money 50% sell, `trade.token_amount` was halved in memory but `positions.json` still had the original amount. Recovery after crash would try to sell tokens no longer held.
+**Fix:** `positions.record(trade)` called again after each successful partial sell.
+
 ## Trade Lifecycle (bot.py `_handle`)
 
 1. Signal arrives from queue
@@ -93,12 +110,12 @@ PRIORITY_FEE_LAMPORTS = 1_000_000  # 0.001 SOL — "auto" is NOT valid for Jupit
 3. Buy via `trader.buy()` — PumpPortal first, Jupiter fallback
 4. `positions.record()` — saved to JSON immediately
 5. Poll loop every 0.5s:
-   - `+10% P&L` → sell 50%, set `_half_sold=True`, remainder is house money
+   - `+10% P&L` → sell 50%, set `_half_sold=True`, update positions.json with new token_amount, remainder is house money
    - `+8% P&L` → full take profit
-   - Peak >= 5% then drops 3pts → trailing stop
-   - No new peak for 20s → momentum stall exit
-   - `-5% P&L (first 30s)` or `-3% (after 30s)` → stop loss + block mint
-   - `90s elapsed` → force sell
+   - Peak >= 5% then drops 2pts → trailing stop
+   - No new peak for 10s → momentum stall exit
+   - `-4% P&L (first 15s)` or `-3% (after 15s)` → stop loss + block mint
+   - `60s elapsed` → force sell
 6. `positions.remove()` only on confirmed sell (`sol_back > 0`)
 7. Stop-loss → `monitor.block_mint(mint)`
 

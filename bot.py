@@ -132,6 +132,8 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                     # Recost basis to the remaining 50% so PnL/stops are correct
                     trade.sol_spent *= 0.5
                     peak_pnl = pnl
+                    # Persist updated token_amount so restart recovery sells the right amount
+                    positions.record(trade)
                 # Continue managing the remaining 50%
                 continue
 
