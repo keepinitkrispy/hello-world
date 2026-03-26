@@ -227,7 +227,7 @@ async def sell(
     trade:   Trade,
     reason:  str,
 ) -> float:
-    """Sell with up to 3 attempts. Returns SOL received (measured via balance delta)."""
+    """Sell with up to 3 attempts. Jupiter first (reliable), PumpPortal fallback."""
     value = await current_value_sol(session, trade)
     pnl   = trade.pnl_pct(value) if value else 0
     print(
@@ -238,6 +238,16 @@ async def sell(
     bal_before = await _get_sol_balance(rpc, keypair)
 
     for attempt in range(1, 4):
+        # Jupiter first — works for both bonding-curve and graduated tokens
+        quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
+        if quote:
+            sol_out = await _jupiter_swap(session, rpc, keypair, quote)
+            if sol_out is not None and sol_out > 0.001:
+                print(f"[trader] Sold {trade.symbol} via Jupiter: {sol_out:.4f} SOL", flush=True)
+                return sol_out
+
+        # PumpPortal fallback
+        print(f"[trader] Jupiter sell attempt {attempt} failed, trying PumpPortal…", flush=True)
         sig = await _pumpportal_tx(
             session, rpc, keypair, "sell", trade.mint, "100%", denom_sol=False
         )
@@ -247,23 +257,15 @@ async def sell(
             sol_received = bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 2
             if sol_received > 0.001:
                 print(
-                    f"[trader] Sold {trade.symbol}: {sig} | received {sol_received:.4f} SOL",
+                    f"[trader] Sold {trade.symbol} via PumpPortal: {sig} | received {sol_received:.4f} SOL",
                     flush=True,
                 )
                 return sol_received
             print(
-                f"[trader] Sig returned but balance unchanged (attempt {attempt}) — retrying",
+                f"[trader] PumpPortal sig returned but balance unchanged (attempt {attempt})",
                 flush=True,
             )
             bal_before = bal_after
-
-        print(f"[trader] PumpPortal sell attempt {attempt} failed, trying Jupiter…", flush=True)
-        quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
-        if quote:
-            sol_out = await _jupiter_swap(session, rpc, keypair, quote)
-            if sol_out is not None and sol_out > 0.001:
-                print(f"[trader] Sold {trade.symbol} via Jupiter: {sol_out:.4f} SOL", flush=True)
-                return sol_out
 
         await asyncio.sleep(2)
 
@@ -296,8 +298,21 @@ async def sell_partial(
         flush=True,
     )
 
-    bal_before = await _get_sol_balance(rpc, keypair)
+    # Jupiter first
+    quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, tokens_to_sell)
+    if quote:
+        sol_out = await _jupiter_swap(session, rpc, keypair, quote)
+        if sol_out is not None and sol_out > 0.001:
+            trade.token_amount -= tokens_to_sell
+            print(
+                f"[trader] Partial sold {trade.symbol} via Jupiter: {sol_out:.4f} SOL "
+                f"| remaining tokens: {trade.token_amount}",
+                flush=True,
+            )
+            return sol_out
 
+    # PumpPortal fallback
+    bal_before = await _get_sol_balance(rpc, keypair)
     sig = await _pumpportal_tx(
         session, rpc, keypair, "sell", trade.mint, tokens_to_sell, denom_sol=False
     )
@@ -308,23 +323,11 @@ async def sell_partial(
         if sol_received > 0.001:
             trade.token_amount -= tokens_to_sell
             print(
-                f"[trader] Partial sold {trade.symbol}: {sol_received:.4f} SOL "
+                f"[trader] Partial sold {trade.symbol} via PumpPortal: {sol_received:.4f} SOL "
                 f"| remaining tokens: {trade.token_amount}",
                 flush=True,
             )
             return sol_received
-
-    # Fallback: Jupiter partial
-    quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, tokens_to_sell)
-    if quote:
-        sol_out = await _jupiter_swap(session, rpc, keypair, quote)
-        if sol_out is not None and sol_out > 0.001:
-            trade.token_amount -= tokens_to_sell
-            print(
-                f"[trader] Partial sold {trade.symbol} via Jupiter: {sol_out:.4f} SOL",
-                flush=True,
-            )
-            return sol_out
 
     print(f"[trader] Partial sell failed for {trade.symbol}", flush=True)
     return 0.0
