@@ -5,7 +5,7 @@ KEYPAIR_PATH = "./keypair.json"
 
 TRADE_PCT = float(os.environ.get("TRADE_PCT", "0.15"))
 GAS_RESERVE_SOL = float(os.environ.get("GAS_RESERVE_SOL", "0.01"))
-MAX_TRADE_SOL = float(os.environ.get("MAX_TRADE_SOL", "0.2"))
+MAX_TRADE_SOL = float(os.environ.get("MAX_TRADE_SOL", "0.03"))
 MIN_TRADE_SOL = 0.015
 
 # Near-graduation zone only. Coins here have real liquidity and real momentum.
@@ -18,12 +18,12 @@ MOMENTUM_WINDOW_SEC = int(os.environ.get("MOMENTUM_WINDOW_SEC", "10"))
 MIN_BC_RISE_PCT = float(os.environ.get("MIN_BC_RISE_PCT", "1.5"))
 MAX_BC_RISE_PCT = float(os.environ.get("MAX_BC_RISE_PCT", "15.0"))  # reject coordinated pump signals
 
-PROFIT_TARGET_PCT = 8
-STOP_LOSS_PCT = 4          # tightened from 5 — cut losses faster
-MAX_HOLD_SECONDS = 60      # reduced from 90 — dead coins don't recover
+PROFIT_TARGET_PCT = 15
+STOP_LOSS_PCT = 8
+MAX_HOLD_SECONDS = 120
 
-TRAIL_ACTIVATE_PCT = 5
-TRAIL_DRAWDOWN_PCT = 2     # tightened from 3 — don't give back gains
+TRAIL_ACTIVATE_PCT = 8
+TRAIL_DRAWDOWN_PCT = 4
 
 POLL_INTERVAL_SEC = 2.0
 POSITION_POLL_SEC = 0.5
