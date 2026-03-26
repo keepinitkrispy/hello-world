@@ -25,6 +25,9 @@ MAX_HOLD_SECONDS = 120
 TRAIL_ACTIVATE_PCT = 12
 TRAIL_DRAWDOWN_PCT = 3
 
+# Route all trades through Jupiter and monitor only graduated tokens
+BONDED_ONLY = os.environ.get("BONDED_ONLY", "false").lower() == "true"
+
 POLL_INTERVAL_SEC = 2.0
 POSITION_POLL_SEC = 0.5
 

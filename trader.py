@@ -190,26 +190,30 @@ async def buy(
 ) -> Optional[Trade]:
     print(f"[trader] Buying {symbol} via PumpPortal: {amount_sol:.4f} SOL", flush=True)
 
-    # Estimate token output from bonding curve before the buy
+    # Estimate token output from bonding curve before the buy (not applicable for graduated tokens)
     token_out = 0
-    try:
-        async with session.get(
-            f"https://frontend-api-v3.pump.fun/coins/{mint}",
-            timeout=aiohttp.ClientTimeout(total=5),
-        ) as resp:
-            if resp.status == 200:
-                coin = await resp.json(content_type=None)
-                vsol = coin.get("virtual_sol_reserves") or 1
-                vtok = coin.get("virtual_token_reserves") or 1
-                amount_lamports = int(amount_sol * LAMPORTS)
-                token_out = int(vtok * amount_lamports / (vsol + amount_lamports))
-    except Exception:
-        pass
+    if not config.BONDED_ONLY:
+        try:
+            async with session.get(
+                f"https://frontend-api-v3.pump.fun/coins/{mint}",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status == 200:
+                    coin = await resp.json(content_type=None)
+                    vsol = coin.get("virtual_sol_reserves") or 1
+                    vtok = coin.get("virtual_token_reserves") or 1
+                    amount_lamports = int(amount_sol * LAMPORTS)
+                    token_out = int(vtok * amount_lamports / (vsol + amount_lamports))
+        except Exception:
+            pass
 
-    sig = await _pumpportal_tx(session, rpc, keypair, "buy", mint, amount_sol, denom_sol=True)
+    sig = None
+    if not config.BONDED_ONLY:
+        sig = await _pumpportal_tx(session, rpc, keypair, "buy", mint, amount_sol, denom_sol=True)
 
     if not sig:
-        print(f"[trader] PumpPortal buy failed, trying Jupiter…", flush=True)
+        if not config.BONDED_ONLY:
+            print(f"[trader] PumpPortal buy failed, trying Jupiter…", flush=True)
         lamports = int(amount_sol * LAMPORTS)
         quote    = await _jupiter_quote(session, config.SOL_MINT, mint, lamports)
         if quote:
@@ -349,24 +353,25 @@ async def sell(
     for attempt in range(1, 4):
         bal_before = await _get_sol_balance(rpc, keypair)
 
-        # ── 1. PumpPortal — "100%" tells it to sell the full balance ──
-        sig = await _pumpportal_tx(
-            session, rpc, keypair, "sell", trade.mint,
-            "100%", denom_sol=False, slippage=slippage_pct,
-        )
-        if sig:
-            print(f"[trader] PumpPortal sig={sig} — confirming…", flush=True)
-            if await _poll_until_sold(rpc, keypair, trade.mint, trade.token_amount):
-                bal_after    = await _get_sol_balance(rpc, keypair)
-                sol_received = max(0.0, bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 2)
-                print(
-                    f"[trader] Sold {trade.symbol} via PumpPortal (attempt {attempt}): {sol_received:.4f} SOL",
-                    flush=True,
-                )
-                return sol_received
-            print(f"[trader] PumpPortal sig={sig} but tokens unchanged (attempt {attempt})", flush=True)
+        # ── 1. PumpPortal — skip in BONDED_ONLY mode ──
+        if not config.BONDED_ONLY:
+            sig = await _pumpportal_tx(
+                session, rpc, keypair, "sell", trade.mint,
+                "100%", denom_sol=False, slippage=slippage_pct,
+            )
+            if sig:
+                print(f"[trader] PumpPortal sig={sig} — confirming…", flush=True)
+                if await _poll_until_sold(rpc, keypair, trade.mint, trade.token_amount):
+                    bal_after    = await _get_sol_balance(rpc, keypair)
+                    sol_received = max(0.0, bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 2)
+                    print(
+                        f"[trader] Sold {trade.symbol} via PumpPortal (attempt {attempt}): {sol_received:.4f} SOL",
+                        flush=True,
+                    )
+                    return sol_received
+                print(f"[trader] PumpPortal sig={sig} but tokens unchanged (attempt {attempt})", flush=True)
 
-        # ── 2. Jupiter — for graduated tokens ──
+        # ── 2. Jupiter — primary in BONDED_ONLY mode, fallback otherwise ──
         quote = await _jupiter_quote(
             session, trade.mint, config.SOL_MINT,
             trade.token_amount, slippage_bps=config.SELL_SLIPPAGE_BPS,
@@ -421,32 +426,33 @@ async def sell_partial(
     bal_before    = await _get_sol_balance(rpc, keypair)
     tokens_before = await _token_balance(rpc, keypair, trade.mint)
 
-    # ── PumpPortal primary ──
-    sig = await _pumpportal_tx(
-        session, rpc, keypair, "sell", trade.mint,
-        tokens_to_sell, denom_sol=False, slippage=slippage_pct,
-    )
-    if sig:
-        print(f"[trader] PumpPortal partial sig={sig} — confirming…", flush=True)
-        await asyncio.sleep(4)
-        tokens_after = await _token_balance(rpc, keypair, trade.mint)
-        if tokens_before >= 0 and tokens_after >= 0 and (tokens_before - tokens_after) >= tokens_to_sell * 0.8:
-            bal_after    = await _get_sol_balance(rpc, keypair)
-            sol_received = max(0.0, bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 4)
-            trade.token_amount = tokens_after
+    # ── PumpPortal primary — skip in BONDED_ONLY mode ──
+    if not config.BONDED_ONLY:
+        sig = await _pumpportal_tx(
+            session, rpc, keypair, "sell", trade.mint,
+            tokens_to_sell, denom_sol=False, slippage=slippage_pct,
+        )
+        if sig:
+            print(f"[trader] PumpPortal partial sig={sig} — confirming…", flush=True)
+            await asyncio.sleep(4)
+            tokens_after = await _token_balance(rpc, keypair, trade.mint)
+            if tokens_before >= 0 and tokens_after >= 0 and (tokens_before - tokens_after) >= tokens_to_sell * 0.8:
+                bal_after    = await _get_sol_balance(rpc, keypair)
+                sol_received = max(0.0, bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 4)
+                trade.token_amount = tokens_after
+                print(
+                    f"[trader] Partial sold {trade.symbol} via PumpPortal: {sol_received:.4f} SOL "
+                    f"| remaining tokens: {trade.token_amount}",
+                    flush=True,
+                )
+                return sol_received
+            actually_sold = max(0, (tokens_before - tokens_after)) if tokens_before >= 0 and tokens_after >= 0 else -1
             print(
-                f"[trader] Partial sold {trade.symbol} via PumpPortal: {sol_received:.4f} SOL "
-                f"| remaining tokens: {trade.token_amount}",
+                f"[trader] PumpPortal partial sig={sig} but only confirmed {actually_sold}/{tokens_to_sell} tokens sold",
                 flush=True,
             )
-            return sol_received
-        actually_sold = max(0, (tokens_before - tokens_after)) if tokens_before >= 0 and tokens_after >= 0 else -1
-        print(
-            f"[trader] PumpPortal partial sig={sig} but only confirmed {actually_sold}/{tokens_to_sell} tokens sold",
-            flush=True,
-        )
 
-    # ── Jupiter fallback ──
+    # ── Jupiter primary (BONDED_ONLY) or fallback ──
     quote = await _jupiter_quote(
         session, trade.mint, config.SOL_MINT,
         tokens_to_sell, slippage_bps=config.SELL_SLIPPAGE_BPS,

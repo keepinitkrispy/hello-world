@@ -46,6 +46,11 @@ _permanent_blocks: set = set()
 
 def _signal_profile() -> str:
     """Return a consistent monitor signal profile for logs."""
+    if config.BONDED_ONLY:
+        return (
+            f"bonded-only "
+            f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s"
+        )
     return (
         f"zone={config.MONITOR_BC_MIN:.1f}-{config.MONITOR_BC_MAX:.1f}% "
         f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
@@ -101,9 +106,9 @@ async def _subscribe(ws, mints: list[str]) -> None:
 
 
 async def _fetch_zone_mints(session: aiohttp.ClientSession) -> list[str]:
-    """REST poll: return mints of coins currently in the BC zone."""
+    """REST poll: return mints in BC zone, or graduated mints if BONDED_ONLY."""
     params = {
-        "sortBy":      "bondingCurve",
+        "sortBy":      "last_trade" if config.BONDED_ONLY else "bondingCurve",
         "order":       "DESC",
         "limit":       100,
         "includeNsfw": "true",
@@ -121,13 +126,20 @@ async def _fetch_zone_mints(session: aiohttp.ClientSession) -> list[str]:
             coins = raw if isinstance(raw, list) else raw.get("coins", raw.get("data", []))
             mints = []
             for coin in coins:
-                if not isinstance(coin, dict) or coin.get("complete"):
+                if not isinstance(coin, dict):
                     continue
-                bc = _bc_from_coin(coin)
-                if config.MONITOR_BC_MIN <= bc <= config.MONITOR_BC_MAX:
-                    mint = coin.get("mint")
-                    if mint:
-                        mints.append(mint)
+                if config.BONDED_ONLY:
+                    if not coin.get("complete"):
+                        continue
+                else:
+                    if coin.get("complete"):
+                        continue
+                    bc = _bc_from_coin(coin)
+                    if not (config.MONITOR_BC_MIN <= bc <= config.MONITOR_BC_MAX):
+                        continue
+                mint = coin.get("mint")
+                if mint:
+                    mints.append(mint)
             return mints
     except Exception as e:
         print(f"[monitor] Zone poll error: {e}", flush=True)
@@ -204,6 +216,35 @@ async def _handle_event(
     if not mint or tx_type not in ("buy", "sell", "create"):
         return
 
+    if config.BONDED_ONLY:
+        # Graduated-token mode: track buy momentum for subscribed mints only, no BC checks
+        if tx_type != "buy" or mint not in _subscribed:
+            return
+        if mint in seen_mints or mint in _permanent_blocks:
+            return
+        sig_t = _signal_times.get(mint)
+        if sig_t and time.time() - sig_t < SIGNAL_COOLDOWN_SEC:
+            return
+        now     = time.time()
+        history = _buy_history[mint]
+        history.append((now, 0.0))
+        cutoff             = now - config.MOMENTUM_WINDOW_SEC
+        _buy_history[mint] = [(t, bc) for t, bc in history if t >= cutoff]
+        if len(_buy_history[mint]) < config.MONITOR_CONSECUTIVE_BUYS:
+            return
+        coin = await _fetch_coin(session, mint)
+        if not coin:
+            print(f"[monitor] skip {mint[:8]}…: coin details unavailable", flush=True)
+            return
+        symbol = coin.get("symbol") or event.get("symbol") or "???"
+        print(
+            f"[monitor] WS SIGNAL (bonded) {symbol} ({mint[:8]}…) "
+            f"{config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s",
+            flush=True,
+        )
+        await _enqueue_candidate(queue, seen_mints, mint, coin, timestamp=now)
+        return
+
     # On new token creation: subscribe to its trades if it's already in zone
     if tx_type == "create" and mint not in _subscribed:
         v_sol = float(event.get("vSolInBondingCurve") or 0)
@@ -264,8 +305,9 @@ async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
         async with session.ws_connect(PUMPPORTAL_WS, heartbeat=20) as ws:
             print("[monitor] WebSocket connected to PumpPortal", flush=True)
 
-            # Catch every new token launch
-            await ws.send_json({"method": "subscribeNewToken"})
+            # Catch every new token launch (not needed in bonded-only mode)
+            if not config.BONDED_ONLY:
+                await ws.send_json({"method": "subscribeNewToken"})
 
             # Background task: discover existing in-zone coins and fallback-enqueue
             poller = asyncio.create_task(_zone_poller(ws, session, queue, seen_mints))

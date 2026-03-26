@@ -93,7 +93,7 @@ async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient],
         return False, "non-ascii"
 
     age = _coin_age_seconds(coin)
-    if age < config.MIN_AGE_SECONDS:
+    if not config.BONDED_ONLY and age < config.MIN_AGE_SECONDS:
         print(f"[filters] SKIP {symbol}: too new ({age:.0f}s)", flush=True)
         return False, "too new"
 
