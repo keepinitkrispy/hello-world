@@ -10,7 +10,7 @@ MIN_TRADE_SOL = 0.015
 
 # Near-graduation zone only. Coins here have real liquidity and real momentum.
 # 1% was watching the entire curve — mostly noise with no graduation pressure.
-MONITOR_BC_MIN = 65
+MONITOR_BC_MIN = 30
 MONITOR_BC_MAX = 88
 
 MOMENTUM_WINDOW_SEC = 15
