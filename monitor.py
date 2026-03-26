@@ -43,8 +43,8 @@ SIGNAL_COOLDOWN_SEC = 600
 # Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
 
-CONSECUTIVE_BUYS = 3   # consecutive buys needed to fire a signal
-TRADE_WINDOW_SEC = 10  # look-back window for consecutive buys
+CONSECUTIVE_BUYS = config.MONITOR_CONSECUTIVE_BUYS
+TRADE_WINDOW_SEC = config.MOMENTUM_WINDOW_SEC
 
 
 def block_mint(mint: str) -> None:
@@ -130,15 +130,45 @@ async def _fetch_coin(session: aiohttp.ClientSession, mint: str) -> dict:
     return {}
 
 
-async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
-    """Every 15s: discover coins already in BC zone and subscribe to their trades."""
+def _normalize_event(raw: dict) -> dict:
+    """PumpPortal messages sometimes nest trade payloads under `data`/`event`."""
+    if not isinstance(raw, dict):
+        return {}
+    payload = raw.get("data")
+    if isinstance(payload, dict):
+        return payload
+    payload = raw.get("event")
+    if isinstance(payload, dict):
+        return payload
+    return raw
+
+
+async def _zone_poller(ws, session: aiohttp.ClientSession, queue: asyncio.Queue, seen_mints: set) -> None:
+    """Every 5s: discover in-zone coins, subscribe, and REST-enqueue as fallback."""
     while True:
         mints = await _fetch_zone_mints(session)
         new   = [m for m in mints if m not in _subscribed]
         if new:
             await _subscribe(ws, new)
+
+        # Fallback path: if WS trade events are sparse/blocked, still process in-zone mints.
+        fallback_queued = 0
+        for mint in new:
+            if mint in seen_mints or mint in _permanent_blocks:
+                continue
+            coin = await _fetch_coin(session, mint)
+            if not coin:
+                continue
+            seen_mints.add(mint)
+            _signal_times[mint] = time.time()
+            await queue.put(coin)
+            fallback_queued += 1
+
         print(
-            f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total)",
+            f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total) "
+            f"| queued={fallback_queued} "
+            f"| zone={config.MONITOR_BC_MIN:.1f}-{config.MONITOR_BC_MAX:.1f}% "
+            f"signal={CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
             flush=True,
         )
         await asyncio.sleep(5)
@@ -151,8 +181,9 @@ async def _handle_event(
     queue:      asyncio.Queue,
     seen_mints: set,
 ) -> None:
+    event = _normalize_event(event)
     mint    = event.get("mint")
-    tx_type = event.get("txType")  # "buy" | "sell" | "create"
+    tx_type = event.get("txType") or event.get("type")  # "buy" | "sell" | "create"
 
     if not mint or tx_type not in ("buy", "sell", "create"):
         return
@@ -199,6 +230,7 @@ async def _handle_event(
     # Fetch full coin data so all filters (age, replies, name, holder check) can run
     coin = await _fetch_coin(session, mint)
     if not coin:
+        print(f"[monitor] skip {mint[:8]}…: coin details unavailable", flush=True)
         return
 
     symbol = coin.get("symbol") or event.get("symbol") or "???"
@@ -222,7 +254,7 @@ async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
             await ws.send_json({"method": "subscribeNewToken"})
 
             # Background task: discover existing in-zone coins every 15s
-            poller = asyncio.create_task(_zone_poller(ws, session))
+            poller = asyncio.create_task(_zone_poller(ws, session, queue, seen_mints))
 
             try:
                 async for msg in ws:

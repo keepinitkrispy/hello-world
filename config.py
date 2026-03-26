@@ -10,12 +10,13 @@ MIN_TRADE_SOL = 0.015
 
 # Near-graduation zone only. Coins here have real liquidity and real momentum.
 # 1% was watching the entire curve — mostly noise with no graduation pressure.
-MONITOR_BC_MIN = 50        # raised from 30 — real momentum + exit liquidity starts here
-MONITOR_BC_MAX = 88
+MONITOR_BC_MIN = float(os.environ.get("MONITOR_BC_MIN", "35"))
+MONITOR_BC_MAX = float(os.environ.get("MONITOR_BC_MAX", "88"))
 
-MOMENTUM_WINDOW_SEC = 15
-MIN_BC_RISE_PCT = 3.0
-MAX_BC_RISE_PCT = 15.0  # reject coordinated pump signals
+MONITOR_CONSECUTIVE_BUYS = int(os.environ.get("MONITOR_CONSECUTIVE_BUYS", "2"))
+MOMENTUM_WINDOW_SEC = int(os.environ.get("MOMENTUM_WINDOW_SEC", "10"))
+MIN_BC_RISE_PCT = float(os.environ.get("MIN_BC_RISE_PCT", "1.5"))
+MAX_BC_RISE_PCT = float(os.environ.get("MAX_BC_RISE_PCT", "15.0"))  # reject coordinated pump signals
 
 PROFIT_TARGET_PCT = 8
 STOP_LOSS_PCT = 4          # tightened from 5 — cut losses faster
@@ -42,9 +43,9 @@ USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 PARK_PROFITS = False  # let profits compound into larger trade sizes
 
 MAX_CREATOR_COINS   = 4
-MIN_REPLY_COUNT     = 3    # raised from 1 — require actual engagement
-MIN_AGE_SECONDS     = 30   # raised from 5 — dev dump window is first 30s
-COPY_SIMILARITY_PCT = 70   # lowered from 80 — catch more clone variants
+MIN_REPLY_COUNT     = int(os.environ.get("MIN_REPLY_COUNT", "1"))
+MIN_AGE_SECONDS     = int(os.environ.get("MIN_AGE_SECONDS", "15"))
+COPY_SIMILARITY_PCT = int(os.environ.get("COPY_SIMILARITY_PCT", "75"))
 
 # Momentum stall: exit if peak P&L hasn't been refreshed in this many seconds
 MOMENTUM_STALL_PEAK_AGE_SEC = 10  # reduced from 20 — exit dead coins faster
