@@ -43,6 +43,16 @@ SIGNAL_COOLDOWN_SEC = 600
 # Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
 
+
+def _signal_profile() -> str:
+    """Return a consistent monitor signal profile for logs."""
+    return (
+        f"zone={config.MONITOR_BC_MIN:.1f}-{config.MONITOR_BC_MAX:.1f}% "
+        f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
+        f"rise={config.MIN_BC_RISE_PCT:.2f}-{config.MAX_BC_RISE_PCT:.2f}%"
+    )
+
+
 def block_mint(mint: str) -> None:
     """Permanently block a mint from re-signaling this session (called after stop-loss exit)."""
     _permanent_blocks.add(mint)
@@ -163,8 +173,7 @@ async def _zone_poller(ws, session: aiohttp.ClientSession, queue: asyncio.Queue,
         print(
             f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total) "
             f"| queued={fallback_queued} "
-            f"| zone={config.MONITOR_BC_MIN:.1f}-{config.MONITOR_BC_MAX:.1f}% "
-            f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s",
+            f"| {_signal_profile()}",
             flush=True,
         )
         await asyncio.sleep(5)
@@ -232,8 +241,7 @@ async def _handle_event(
     symbol = coin.get("symbol") or event.get("symbol") or "???"
     print(
         f"[monitor] WS SIGNAL {symbol} ({mint[:8]}…) "
-        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | "
-        f"{config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s",
+        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | {_signal_profile()}",
         flush=True,
     )
 

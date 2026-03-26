@@ -222,8 +222,8 @@ async def main(dry_run: bool) -> None:
         flush=True,
     )
 
-    queue         = asyncio.Queue()
-    seen_mints:   set = set()
+    queue = asyncio.Queue()
+    seen_mints: set = set()
     active_mints: set = set()
 
     mt = asyncio.create_task(monitor.run(queue, seen_mints), name="monitor")
