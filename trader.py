@@ -100,12 +100,25 @@ async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[float]:
         tx_bytes  = base64.b64decode(data["swapTransaction"])
         tx        = VersionedTransaction.from_bytes(tx_bytes)
         signed_tx = VersionedTransaction(tx.message, [keypair])
-        result    = await rpc.send_raw_transaction(
+        result = await rpc.send_raw_transaction(
             bytes(signed_tx),
             opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
-        print(f"[trader] Jupiter tx submitted: {result.value}", flush=True)
-        return int(quote.get("outAmount", 0)) / LAMPORTS
+        tx_sig = result.value
+        print(f"[trader] Jupiter tx submitted: {tx_sig}", flush=True)
+
+        # Confirm the tx actually landed — do NOT trust quote outAmount blindly
+        for _ in range(6):
+            await asyncio.sleep(1)
+            statuses = await rpc.get_signature_statuses([tx_sig])
+            if statuses.value and statuses.value[0] is not None:
+                if statuses.value[0].err:
+                    print(f"[trader] Jupiter tx failed on-chain: {statuses.value[0].err}", flush=True)
+                    return None
+                return int(quote.get("outAmount", 0)) / LAMPORTS
+
+        print(f"[trader] Jupiter tx confirmation timeout: {tx_sig}", flush=True)
+        return None
     except Exception as e:
         print(f"[trader] Jupiter error: {e}", flush=True)
         return None
