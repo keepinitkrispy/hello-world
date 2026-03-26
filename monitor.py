@@ -43,6 +43,9 @@ SIGNAL_COOLDOWN_SEC = 600
 # Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
 
+# Strong references to background tasks so GC doesn't cancel them mid-flight
+_bg_tasks: set = set()
+
 CONSECUTIVE_BUYS = 3   # consecutive buys needed to fire a signal
 TRADE_WINDOW_SEC = 10  # look-back window for consecutive buys
 
@@ -187,7 +190,9 @@ def _handle_event(
     if tx_type == "create" and mint not in _subscribed:
         v_sol = float(event.get("vSolInBondingCurve") or 0)
         if config.MONITOR_BC_MIN <= _bc_from_vsol(v_sol) <= config.MONITOR_BC_MAX:
-            asyncio.create_task(_subscribe(ws, [mint]))
+            t = asyncio.create_task(_subscribe(ws, [mint]))
+            _bg_tasks.add(t)
+            t.add_done_callback(_bg_tasks.discard)
 
     if tx_type != "buy":
         return
@@ -228,9 +233,11 @@ def _handle_event(
 
     # Fetch coin data and enqueue in a background task — never blocks the WS loop
     symbol_hint = event.get("symbol") or ""
-    asyncio.create_task(
+    t = asyncio.create_task(
         _enqueue_signal(mint, bc_pct, bc_rise, symbol_hint, session, queue, seen_mints)
     )
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
 
 
 async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:

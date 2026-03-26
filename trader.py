@@ -267,12 +267,16 @@ async def sell(
 
     bal_before = await _get_sol_balance(rpc, keypair)
 
-    sell_slippage_pct = config.SELL_SLIPPAGE_BPS // 100
+    # Escalate slippage per attempt: tight first to avoid MEV, wider to guarantee exit
+    _slippage_ladder_bps = [config.SELL_SLIPPAGE_BPS, 500, 1000]  # 3% → 5% → 10%
 
     for attempt in range(1, 4):
+        slippage_bps = _slippage_ladder_bps[attempt - 1]
+        slippage_pct = slippage_bps // 100
+
         # Jupiter first — works for both bonding-curve and graduated tokens
         quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, trade.token_amount,
-                                     slippage_bps=config.SELL_SLIPPAGE_BPS)
+                                     slippage_bps=slippage_bps)
         if quote:
             sol_out = await _jupiter_swap(session, rpc, keypair, quote)
             if sol_out is not None and sol_out > 0.001:
@@ -280,10 +284,10 @@ async def sell(
                 return sol_out
 
         # PumpPortal fallback
-        print(f"[trader] Jupiter sell attempt {attempt} failed, trying PumpPortal…", flush=True)
+        print(f"[trader] Jupiter sell attempt {attempt} failed (slippage={slippage_pct}%), trying PumpPortal…", flush=True)
         sig = await _pumpportal_tx(
             session, rpc, keypair, "sell", trade.mint, "100%", denom_sol=False,
-            slippage=sell_slippage_pct,
+            slippage=slippage_pct,
         )
         if sig:
             await asyncio.sleep(2)
