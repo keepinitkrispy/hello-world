@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import os
 import sys
 import time
 
@@ -13,6 +14,22 @@ import positions
 import profits
 import trader
 import wallet
+
+
+def _validate_deploy_config(dry_run: bool) -> None:
+    """Fail fast on missing production credentials/config."""
+    if dry_run:
+        return
+
+    has_env_key = bool(os.environ.get("SOLANA_PRIVATE_KEY"))
+    has_file_key = os.path.exists(config.KEYPAIR_PATH)
+    if not has_env_key and not has_file_key:
+        print(
+            "[bot] Missing wallet credentials. Set SOLANA_PRIVATE_KEY in Railway "
+            "or provide keypair.json before deploying.",
+            flush=True,
+        )
+        sys.exit(1)
 
 
 def _task_error_handler(task: asyncio.Task) -> None:
@@ -193,6 +210,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
 
 async def main(dry_run: bool) -> None:
+    _validate_deploy_config(dry_run)
     kp = wallet.load_or_create(config.KEYPAIR_PATH)
 
     if not dry_run:
