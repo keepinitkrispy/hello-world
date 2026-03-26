@@ -80,8 +80,13 @@ async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps:
         return None
 
 
-async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[str]:
-    """Execute Jupiter swap tx and return signature on success."""
+async def _jupiter_submit(
+    session: aiohttp.ClientSession,
+    rpc: AsyncClient,
+    keypair: Keypair,
+    quote,
+) -> Optional[str]:
+    """Build, sign, and submit a Jupiter swap transaction. Returns tx signature."""
     import base64
     body = {
         "quoteResponse":             quote,
@@ -203,7 +208,7 @@ async def buy(
     mint:       str,
     symbol:     str,
     amount_sol: float,
-    ) -> Optional[Trade]:
+) -> Optional[Trade]:
     buy_route = "Jupiter" if config.BONDED_ONLY else "PumpPortal"
     print(f"[trader] Buying {symbol} via {buy_route}: {amount_sol:.4f} SOL", flush=True)
 
@@ -235,7 +240,7 @@ async def buy(
         lamports = int(amount_sol * LAMPORTS)
         quote    = await _jupiter_quote(session, config.SOL_MINT, mint, lamports)
         if quote:
-            jup_sig = await _jupiter_swap(session, rpc, keypair, quote)
+            jup_sig = await _jupiter_submit(session, rpc, keypair, quote)
             if jup_sig:
                 token_out = int(quote.get("outAmount", 0))
                 jupiter_sig = jup_sig
@@ -303,49 +308,6 @@ async def _poll_until_sold(
             return True
         await asyncio.sleep(1.5)
     return False
-
-
-# ── Jupiter sell-only submit (no SOL delta logic) ──────────────────────────────
-
-async def _jupiter_submit(
-    session: aiohttp.ClientSession,
-    rpc:     AsyncClient,
-    keypair: Keypair,
-    quote,
-) -> Optional[str]:
-    """
-    Build, sign, and submit a Jupiter swap transaction.
-    Returns the transaction signature on success, None on failure.
-    Does NOT wait for confirmation — caller confirms via _poll_until_sold.
-    """
-    import base64
-    body = {
-        "quoteResponse":             quote,
-        "userPublicKey":             str(keypair.pubkey()),
-        "wrapAndUnwrapSol":          True,
-        "prioritizationFeeLamports": config.PRIORITY_FEE_LAMPORTS,
-    }
-    try:
-        async with session.post(
-            JUPITER_SWAP, json=body, timeout=aiohttp.ClientTimeout(total=15)
-        ) as resp:
-            if resp.status != 200:
-                err = await resp.text()
-                print(f"[trader] Jupiter swap {resp.status}: {err[:200]}", flush=True)
-                return None
-            data = await resp.json()
-        tx_bytes  = base64.b64decode(data["swapTransaction"])
-        tx        = VersionedTransaction.from_bytes(tx_bytes)
-        signed_tx = VersionedTransaction(tx.message, [keypair])
-        result    = await rpc.send_raw_transaction(
-            bytes(signed_tx),
-            opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
-        )
-        print(f"[trader] Jupiter tx submitted: {result.value}", flush=True)
-        return str(result.value)
-    except Exception as e:
-        print(f"[trader] Jupiter submit error: {e}", flush=True)
-        return None
 
 
 # ── Sell ───────────────────────────────────────────────────────────────────────
