@@ -6,7 +6,7 @@ import aiohttp
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.types import TxOpts
+from solana.rpc.types import TxOpts, TokenAccountOpts
 
 import config
 
@@ -254,7 +254,7 @@ async def _token_balance(rpc: AsyncClient, keypair: Keypair, mint: str) -> int:
     try:
         accts = await rpc.get_token_accounts_by_owner_json_parsed(
             keypair.pubkey(),
-            {"mint": Pubkey.from_string(mint)},
+            TokenAccountOpts(mint=Pubkey.from_string(mint)),
         )
         if not accts.value:
             return 0
