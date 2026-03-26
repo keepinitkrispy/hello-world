@@ -76,9 +76,21 @@ async def _check_holder_safety(rpc: AsyncClient, mint: str, coin: dict) -> tuple
         return True, ""  # allow on RPC error — don't block trades due to infra issues
 
 
+def _is_non_ascii(name: str, symbol: str) -> bool:
+    """Reject coins with Korean/Chinese/Japanese/Cyrillic characters — nearly always rugs."""
+    for ch in name + symbol:
+        if ord(ch) > 127:
+            return True
+    return False
+
+
 async def passes_all(session: aiohttp.ClientSession, rpc: Optional[AsyncClient], coin: dict) -> tuple[bool, str]:
     symbol = coin.get("symbol", "?")
     name   = coin.get("name", "?")
+
+    if _is_non_ascii(name, symbol):
+        print(f"[filters] SKIP {symbol}: non-ASCII name/symbol", flush=True)
+        return False, "non-ascii"
 
     age = _coin_age_seconds(coin)
     if age < config.MIN_AGE_SECONDS:
