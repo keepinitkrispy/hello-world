@@ -1,41 +1,50 @@
 """
-Momentum monitor — near-graduation strategy.
+Real-time momentum monitor — WebSocket-based (PumpPortal live feed).
 
-Polls pump.fun for coins in the 65-88% bonding curve zone.
-Fires when a coin rises >= MIN_BC_RISE_PCT within MOMENTUM_WINDOW_SEC.
-Coins this close to graduation already have real Jupiter liquidity.
+Single persistent WS connection to wss://pumpportal.fun/api/data.
+- subscribeNewToken  : catches every new launch and subscribes to its trades
+- Zone poller (15s)  : REST poll to discover coins already in BC zone, subscribes to trades
+- Signal condition   : 3+ consecutive buys within 10s with BC rising in zone
+
+Why this beats polling: trade events arrive the instant they land on-chain.
+The old 2s REST poll was always arriving after the pump.
 """
 
 import asyncio
+import json
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
 
 import aiohttp
 
 import config
 
-PUMPFUN_API = "https://frontend-api-v3.pump.fun/coins"
+PUMPPORTAL_WS    = "wss://pumpportal.fun/api/data"
+PUMPFUN_API      = "https://frontend-api-v3.pump.fun/coins"
+PUMPFUN_COIN_URL = "https://frontend-api-v3.pump.fun/coins/{mint}"
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer":    "https://pump.fun/",
     "Origin":     "https://pump.fun",
     "Accept":     "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
 }
 
-# mint -> deque of (timestamp, bonding_pct) snapshots
-_bc_history: dict[str, deque] = defaultdict(lambda: deque())
+# Per-mint buy history: list of (timestamp, bc_pct)
+_buy_history: dict[str, list] = defaultdict(list)
 
-# mint -> timestamp of last signal fire (for cooldown)
+# Mints we've already subscribed to trade events
+_subscribed: set = set()
+
+# Signal cooldown tracking
 _signal_times: dict[str, float] = {}
-SIGNAL_COOLDOWN_SEC = 600  # re-allow entry after 10 minutes
+SIGNAL_COOLDOWN_SEC = 600
 
-# Mints permanently blocked from re-signaling this session (e.g. after stop-loss exit)
+# Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
 
-_err_count = 0
-_logged_sample = False
+CONSECUTIVE_BUYS = 3   # consecutive buys needed to fire a signal
+TRADE_WINDOW_SEC = 10  # look-back window for consecutive buys
 
 
 def block_mint(mint: str) -> None:
@@ -44,25 +53,36 @@ def block_mint(mint: str) -> None:
     print(f"[monitor] Blocked {mint[:8]}… from re-entry this session", flush=True)
 
 
-def _bc_pct(coin: dict) -> float:
-    # Graduation = 85 SOL real reserves (confirmed from live completed coin data).
-    # Use real_sol_reserves as primary — price-independent ground truth.
+def _bc_from_vsol(v_sol: float) -> float:
+    """
+    Calculate BC% from vSolInBondingCurve (WebSocket field, value in SOL not lamports).
+    pump.fun initialises at 30 SOL virtual, graduates at 115 SOL (delta = 85 SOL).
+    """
+    pct = (v_sol - 30.0) / 85.0 * 100.0
+    return max(0.0, min(99.9, pct))
+
+
+def _bc_from_coin(coin: dict) -> float:
+    """Calculate BC% from REST API coin dict (reserves in lamports)."""
     real_sol = coin.get("real_sol_reserves") or 0
     if real_sol:
         return min(99.9, float(real_sol) / 85e9 * 100)
-
-    # Fallback: virtual_sol_reserves — pump.fun inits at 30 SOL, graduates at 115 SOL
     vsol = coin.get("virtual_sol_reserves") or 0
     if vsol:
         pct = (float(vsol) - 30e9) / 85e9 * 100
         return max(0.0, min(99.9, pct))
-
     return 0.0
 
 
-async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
-    """Fetch coins sorted by bonding curve progress descending (near graduation first)."""
-    global _err_count
+async def _subscribe(ws, mints: list[str]) -> None:
+    if not mints:
+        return
+    await ws.send_json({"method": "subscribeTokenTrade", "keys": mints})
+    _subscribed.update(mints)
+
+
+async def _fetch_zone_mints(session: aiohttp.ClientSession) -> list[str]:
+    """REST poll: return mints of coins currently in the BC zone."""
     params = {
         "sortBy":      "bondingCurve",
         "order":       "DESC",
@@ -77,157 +97,165 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
-                body = await resp.text()
-                _err_count += 1
-                wait = min(2 * _err_count, 30)
-                print(f"[monitor] API {resp.status} (retry in {wait}s): {body[:200]}", flush=True)
-                await asyncio.sleep(wait)
                 return []
-
             raw = await resp.json(content_type=None)
-
-            # Handle both plain list and {"coins": [...]} dict format
-            if isinstance(raw, dict):
-                data = raw.get("coins") or raw.get("data") or []
-                if not isinstance(data, list):
-                    print(f"[monitor] Unexpected dict keys: {list(raw.keys())}", flush=True)
-                    return []
-            elif isinstance(raw, list):
-                data = raw
-            else:
-                print(f"[monitor] Unexpected response type: {type(raw)}", flush=True)
-                return []
-
-            _err_count = 0
-
-            # Log BC distribution to verify field names and zone coverage
-            if data:
-                global _logged_sample
-                bcs = sorted([_bc_pct(c) for c in data if isinstance(c, dict)], reverse=True)
-                print(f"[monitor] API ok — {len(data)} coins | BC range: {bcs[-1]:.1f}%-{bcs[0]:.1f}%", flush=True)
-                if not _logged_sample:
-                    _logged_sample = True
-                    print("[monitor] first coin keys+values:", flush=True)
-                    for k, v in data[0].items():
-                        print(f"  {k}: {v!r}", flush=True)
-            else:
-                print(f"[monitor] API ok — 0 coins returned", flush=True)
-
+            coins = raw if isinstance(raw, list) else raw.get("coins", raw.get("data", []))
+            mints = []
+            for coin in coins:
+                if not isinstance(coin, dict) or coin.get("complete"):
+                    continue
+                bc = _bc_from_coin(coin)
+                if config.MONITOR_BC_MIN <= bc <= config.MONITOR_BC_MAX:
+                    mint = coin.get("mint")
+                    if mint:
+                        mints.append(mint)
+            return mints
     except Exception as e:
-        _err_count += 1
-        wait = min(2 * _err_count, 30)
-        print(f"[monitor] Fetch error ({type(e).__name__}): {e} — retry in {wait}s", flush=True)
-        await asyncio.sleep(wait)
+        print(f"[monitor] Zone poll error: {e}", flush=True)
         return []
 
-    # Only skip completed/graduated coins — let Jupiter handle liquidity filtering
-    results = []
-    for coin in data:
-        if not isinstance(coin, dict):
-            continue
-        if coin.get("complete"):
-            continue
-        results.append(coin)
 
-    return results
-
-
-def _check_momentum(coin: dict) -> tuple[bool, float]:
-    """Return (should_buy, rise_pts) for this coin."""
-    mint = coin["mint"]
-    bc   = _bc_pct(coin)
-    now  = time.time()
-
-    history = _bc_history[mint]
-    history.append((now, bc))
-
-    # Drop entries older than the window
-    cutoff = now - config.MOMENTUM_WINDOW_SEC
-    while history and history[0][0] < cutoff:
-        history.popleft()
-
-    if len(history) < 4:
-        return False, 0.0
-
-    readings = [bc for _, bc in history]
-    total_rise = readings[-1] - readings[0]
-
-    # Require net rise meets threshold but isn't an extreme pump (likely coordinated rug)
-    if total_rise < config.MIN_BC_RISE_PCT:
-        return False, total_rise
-    if total_rise > config.MAX_BC_RISE_PCT:
-        return False, total_rise
-
-    # Require price is still rising NOW — last reading must be higher than 2 readings ago
-    # This rejects spike-and-dump: coin pumped 5% then already falling back
-    if readings[-1] <= readings[-3]:
-        return False, total_rise
-
-    # Require majority of intervals are rising (consistent climb, not one spike)
-    rising = sum(1 for i in range(1, len(readings)) if readings[i] > readings[i - 1])
-    if rising < len(readings) * 0.5:
-        return False, total_rise
-
-    # Require at least 1 reply — no community = likely rug
-    if int(coin.get("reply_count") or 0) < 1:
-        return False, total_rise
-
-    return True, total_rise
+async def _fetch_coin(session: aiohttp.ClientSession, mint: str) -> dict:
+    """Fetch full coin data for a mint (needed for filters: age, replies, name, etc.)."""
+    try:
+        async with session.get(
+            PUMPFUN_COIN_URL.format(mint=mint),
+            headers=_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as resp:
+            if resp.status == 200:
+                return await resp.json(content_type=None)
+    except Exception:
+        pass
+    return {}
 
 
-async def _run_inner(queue: asyncio.Queue, seen_mints: set) -> None:
-    _tick = 0
+async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
+    """Every 15s: discover coins already in BC zone and subscribe to their trades."""
+    while True:
+        mints = await _fetch_zone_mints(session)
+        new   = [m for m in mints if m not in _subscribed]
+        if new:
+            await _subscribe(ws, new)
+            print(
+                f"[monitor] Zone poll: +{len(new)} new subscriptions ({len(_subscribed)} total)",
+                flush=True,
+            )
+        await asyncio.sleep(15)
+
+
+async def _handle_event(
+    event:      dict,
+    ws,
+    session:    aiohttp.ClientSession,
+    queue:      asyncio.Queue,
+    seen_mints: set,
+) -> None:
+    mint    = event.get("mint")
+    tx_type = event.get("txType")  # "buy" | "sell" | "create"
+
+    if not mint or tx_type not in ("buy", "sell", "create"):
+        return
+
+    # On new token creation: subscribe to its trades if it's already in zone
+    if tx_type == "create" and mint not in _subscribed:
+        v_sol = float(event.get("vSolInBondingCurve") or 0)
+        if config.MONITOR_BC_MIN <= _bc_from_vsol(v_sol) <= config.MONITOR_BC_MAX:
+            await _subscribe(ws, [mint])
+
+    if tx_type != "buy":
+        return
+
+    # Skip if blocked or in cooldown
+    if mint in seen_mints or mint in _permanent_blocks:
+        return
+    sig_t = _signal_times.get(mint)
+    if sig_t and time.time() - sig_t < SIGNAL_COOLDOWN_SEC:
+        return
+
+    v_sol  = float(event.get("vSolInBondingCurve") or 0)
+    bc_pct = _bc_from_vsol(v_sol)
+
+    if not (config.MONITOR_BC_MIN <= bc_pct <= config.MONITOR_BC_MAX):
+        return
+
+    now     = time.time()
+    history = _buy_history[mint]
+    history.append((now, bc_pct))
+
+    # Trim to window
+    cutoff             = now - TRADE_WINDOW_SEC
+    _buy_history[mint] = [(t, bc) for t, bc in history if t >= cutoff]
+    history            = _buy_history[mint]
+
+    if len(history) < CONSECUTIVE_BUYS:
+        return
+
+    # BC must be rising over the window — not too slow, not too fast (rug pump)
+    bc_rise = history[-1][1] - history[0][1]
+    if bc_rise < config.MIN_BC_RISE_PCT or bc_rise > config.MAX_BC_RISE_PCT:
+        return
+
+    # Fetch full coin data so all filters (age, replies, name, holder check) can run
+    coin = await _fetch_coin(session, mint)
+    if not coin:
+        return
+
+    symbol = coin.get("symbol") or event.get("symbol") or "???"
+    print(
+        f"[monitor] WS SIGNAL {symbol} ({mint[:8]}…) "
+        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | {CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
+        flush=True,
+    )
+
+    seen_mints.add(mint)
+    _signal_times[mint] = now
+    await queue.put(coin)
+
+
+async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
     async with aiohttp.ClientSession() as session:
-        while True:
-            coins = await _fetch_zone(session)
-            _tick += 1
+        async with session.ws_connect(PUMPPORTAL_WS, heartbeat=20) as ws:
+            print("[monitor] WebSocket connected to PumpPortal", flush=True)
 
-            # Expire cooled-down mints so coins can re-signal after SIGNAL_COOLDOWN_SEC
-            now = time.time()
-            expired = [m for m, t in _signal_times.items() if now - t > SIGNAL_COOLDOWN_SEC]
-            for m in expired:
-                seen_mints.discard(m)
-                del _signal_times[m]
+            # Catch every new token launch
+            await ws.send_json({"method": "subscribeNewToken"})
 
-            # Periodic status + sample every 20 ticks
-            if _tick % 20 == 1:
-                print(f"[monitor] tick={_tick} zone_coins={len(coins)} cooled={len(expired)}", flush=True)
-                if coins:
-                    s = coins[0]
-                    print(
-                        f"[monitor] top coin: {s.get('symbol','?')} bc={_bc_pct(s):.1f}%",
-                        flush=True,
-                    )
+            # Background task: discover existing in-zone coins every 15s
+            poller = asyncio.create_task(_zone_poller(ws, session))
 
-            for coin in coins:
-                mint = coin.get("mint")
-                if not mint or mint in seen_mints or mint in _permanent_blocks:
-                    continue
+            try:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        try:
+                            event = json.loads(msg.data)
+                        except json.JSONDecodeError:
+                            continue
 
-                bc = _bc_pct(coin)
-                if not (config.MONITOR_BC_MIN <= bc <= config.MONITOR_BC_MAX):
-                    continue
+                        # Expire cooldowns
+                        now     = time.time()
+                        expired = [m for m, t in list(_signal_times.items()) if now - t > SIGNAL_COOLDOWN_SEC]
+                        for m in expired:
+                            seen_mints.discard(m)
+                            del _signal_times[m]
 
-                fired, rise = _check_momentum(coin)
-                if fired:
-                    seen_mints.add(mint)
-                    _signal_times[mint] = time.time()
-                    symbol = coin.get("symbol", "???")
-                    print(
-                        f"[monitor] SIGNAL {symbol} ({mint[:8]}…) "
-                        f"BC={_bc_pct(coin):.1f}% +{rise:.1f}pts/{config.MOMENTUM_WINDOW_SEC}s",
-                        flush=True,
-                    )
-                    await queue.put(coin)
+                        await _handle_event(event, ws, session, queue, seen_mints)
 
-            await asyncio.sleep(config.POLL_INTERVAL_SEC)
+                    elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+                        print(f"[monitor] WS disconnected: {msg.data}", flush=True)
+                        break
+            finally:
+                poller.cancel()
 
 
 async def run(queue: asyncio.Queue, seen_mints: set) -> None:
-    try:
-        await _run_inner(queue, seen_mints)
-    except Exception as exc:
-        import traceback
-        print(f"[monitor] FATAL: {exc}", flush=True)
-        traceback.print_exc()
-        raise
+    """Entry point called by bot.py. Reconnects automatically on any failure."""
+    while True:
+        try:
+            await _run_ws(queue, seen_mints)
+        except Exception as exc:
+            import traceback
+            print(f"[monitor] WS error: {exc}", flush=True)
+            traceback.print_exc()
+        print("[monitor] Reconnecting in 5s…", flush=True)
+        await asyncio.sleep(5)
