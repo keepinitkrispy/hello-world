@@ -141,7 +141,7 @@ async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
                 f"[monitor] Zone poll: +{len(new)} new subscriptions ({len(_subscribed)} total)",
                 flush=True,
             )
-        await asyncio.sleep(15)
+        await asyncio.sleep(5)
 
 
 async def _handle_event(
