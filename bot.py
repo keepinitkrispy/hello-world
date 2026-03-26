@@ -42,6 +42,16 @@ def _task_error_handler(task: asyncio.Task) -> None:
         pass
 
 
+def _ready_profile() -> str:
+    return (
+        f"zone={config.MONITOR_BC_MIN}-{config.MONITOR_BC_MAX}% "
+        f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
+        f"rise={config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}% "
+        f"filters(age>={config.MIN_AGE_SECONDS}s replies>={config.MIN_REPLY_COUNT}) "
+        f"stop={config.STOP_LOSS_PCT}%"
+    )
+
+
 async def _monitor_existing(session, rpc, keypair, trade, active):
     """Sell a position recovered from a previous run as quickly as possible."""
     symbol = trade.symbol
@@ -215,17 +225,10 @@ async def main(dry_run: bool) -> None:
         rpc = None
         print("[bot] DRY RUN", flush=True)
 
-    print(
-        f"[bot] READY | zone={config.MONITOR_BC_MIN}-{config.MONITOR_BC_MAX}% "
-        f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
-        f"rise={config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}% "
-        f"filters(age>={config.MIN_AGE_SECONDS}s replies>={config.MIN_REPLY_COUNT}) "
-        f"stop={config.STOP_LOSS_PCT}%",
-        flush=True,
-    )
+    print(f"[bot] READY | {_ready_profile()}", flush=True)
 
-    queue         = asyncio.Queue()
-    seen_mints:   set = set()
+    queue = asyncio.Queue()
+    seen_mints: set = set()
     active_mints: set = set()
 
     mt = asyncio.create_task(monitor.run(queue, seen_mints), name="monitor")
