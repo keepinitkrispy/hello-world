@@ -2,9 +2,9 @@
 Real-time momentum monitor — WebSocket-based (PumpPortal live feed).
 
 Single persistent WS connection to wss://pumpportal.fun/api/data.
-- subscribeNewToken  : catches every new launch and subscribes to its trades
-- Zone poller (15s)  : REST poll to discover coins already in BC zone, subscribes to trades
-- Signal condition   : 3+ consecutive buys within 10s with BC rising in zone
+- subscribeNewToken   : catches every new launch and subscribes to its trades
+- Zone poller (every 5s): REST poll to discover coins already in BC zone, subscribes to trades
+- Signal condition    : configurable consecutive buys within configurable window
 
 Why this beats polling: trade events arrive the instant they land on-chain.
 The old 2s REST poll was always arriving after the pump.
@@ -253,7 +253,7 @@ async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
             # Catch every new token launch
             await ws.send_json({"method": "subscribeNewToken"})
 
-            # Background task: discover existing in-zone coins every 15s
+            # Background task: discover existing in-zone coins and fallback-enqueue
             poller = asyncio.create_task(_zone_poller(ws, session, queue, seen_mints))
 
             try:
