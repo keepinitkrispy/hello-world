@@ -68,6 +68,7 @@ async def _fetch_zone(session: aiohttp.ClientSession) -> list[dict]:
         "order":       "DESC",
         "limit":       100,
         "includeNsfw": "true",
+        "minProgress": 65,   # API-level pre-filter; silently ignored if unsupported
     }
     try:
         async with session.get(
