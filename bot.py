@@ -11,7 +11,6 @@ import config
 import filters
 import monitor
 import positions
-import profits
 import trader
 import wallet
 
@@ -81,8 +80,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
         bal_resp    = await rpc.get_balance(keypair.pubkey())
         balance_sol = bal_resp.value / 1_000_000_000
-        parked      = profits.load()
-        spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked)
+        spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
         buy_amount  = round(min(spendable * config.TRADE_PCT, config.MAX_TRADE_SOL), 6)
 
         if buy_amount < config.MIN_TRADE_SOL:
@@ -142,10 +140,6 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 )
                 if sol_back > 0:
                     trade._half_sold = True
-                    if config.PARK_PROFITS and sol_back > trade.sol_spent * 0.5:
-                        gain  = sol_back - trade.sol_spent * 0.5
-                        total = profits.add(gain)
-                        print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                     # Recost basis to the remaining 50% so PnL/stops are correct
                     trade.sol_spent *= 0.5
                     peak_pnl = pnl
@@ -158,10 +152,6 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
             if pnl >= config.PROFIT_TARGET_PCT:
                 sol_back = await trader.sell(session, rpc, keypair, trade, "TAKE PROFIT")
                 _position_sold = sol_back > 0
-                if config.PARK_PROFITS and sol_back > trade.sol_spent:
-                    gain  = sol_back - trade.sol_spent
-                    total = profits.add(gain)
-                    print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
 
             elif peak_pnl >= config.TRAIL_ACTIVATE_PCT and pnl <= peak_pnl - config.TRAIL_DRAWDOWN_PCT:
@@ -169,10 +159,6 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                     session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)"
                 )
                 _position_sold = sol_back > 0
-                if config.PARK_PROFITS and sol_back > trade.sol_spent:
-                    gain  = sol_back - trade.sol_spent
-                    total = profits.add(gain)
-                    print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
 
             elif (
@@ -217,10 +203,9 @@ async def main(dry_run: bool) -> None:
         rpc          = AsyncClient(config.RPC_URL)
         balance_resp = await rpc.get_balance(kp.pubkey())
         balance_sol  = balance_resp.value / 1_000_000_000
-        parked_total = profits.load()
-        spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked_total)
+        spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL)
         print(
-            f"[bot] Balance={balance_sol:.4f} SOL parked={parked_total:.4f} SOL spendable={spendable:.4f} SOL",
+            f"[bot] Balance={balance_sol:.4f} SOL spendable={spendable:.4f} SOL",
             flush=True,
         )
         if spendable < config.MIN_TRADE_SOL:
