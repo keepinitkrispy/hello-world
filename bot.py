@@ -64,7 +64,7 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
 
         bal_resp    = await rpc.get_balance(keypair.pubkey())
         balance_sol = bal_resp.value / 1_000_000_000
-        parked      = profits.load()
+        parked      = profits.load() if config.PARK_PROFITS else 0.0
         spendable   = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked)
         buy_amount  = round(min(spendable * config.TRADE_PCT, config.MAX_TRADE_SOL), 6)
 
@@ -199,7 +199,7 @@ async def main(dry_run: bool) -> None:
         rpc          = AsyncClient(config.RPC_URL)
         balance_resp = await rpc.get_balance(kp.pubkey())
         balance_sol  = balance_resp.value / 1_000_000_000
-        parked_total = profits.load()
+        parked_total = profits.load() if config.PARK_PROFITS else 0.0
         spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked_total)
         print(
             f"[bot] Balance={balance_sol:.4f} SOL parked={parked_total:.4f} SOL spendable={spendable:.4f} SOL",
@@ -217,6 +217,7 @@ async def main(dry_run: bool) -> None:
         f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
         f"rise={config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}% "
         f"filters(age>={config.MIN_AGE_SECONDS}s replies>={config.MIN_REPLY_COUNT}) "
+        f"park_profits={config.PARK_PROFITS} "
         f"stop={config.STOP_LOSS_PCT}%",
         flush=True,
     )
