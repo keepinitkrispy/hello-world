@@ -141,7 +141,7 @@ async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
                 f"[monitor] Zone poll: +{len(new)} new subscriptions ({len(_subscribed)} total)",
                 flush=True,
             )
-        await asyncio.sleep(15)
+        await asyncio.sleep(5)
 
 
 async def _handle_event(
@@ -157,10 +157,11 @@ async def _handle_event(
     if not mint or tx_type not in ("buy", "sell", "create"):
         return
 
-    # Subscribe to every new token's trades immediately so we're watching
-    # before it enters the zone — zone check happens per-buy-event anyway
+    # On new token creation: subscribe to its trades if it's already in zone
     if tx_type == "create" and mint not in _subscribed:
-        await _subscribe(ws, [mint])
+        v_sol = float(event.get("vSolInBondingCurve") or 0)
+        if config.MONITOR_BC_MIN <= _bc_from_vsol(v_sol) <= config.MONITOR_BC_MAX:
+            await _subscribe(ws, [mint])
 
     if tx_type != "buy":
         return
