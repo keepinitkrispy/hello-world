@@ -80,8 +80,8 @@ async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps:
         return None
 
 
-async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[float]:
-    """Execute Jupiter swap. Returns SOL received (balance delta) on success, None on failure."""
+async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[str]:
+    """Execute Jupiter swap tx and return signature on success."""
     import base64
     body = {
         "quoteResponse":             quote,
@@ -101,19 +101,13 @@ async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[float]:
         tx_bytes  = base64.b64decode(data["swapTransaction"])
         tx        = VersionedTransaction.from_bytes(tx_bytes)
         signed_tx = VersionedTransaction(tx.message, [keypair])
-        bal_before = await _get_sol_balance(rpc, keypair)
         result    = await rpc.send_raw_transaction(
             bytes(signed_tx),
             opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
-        print(f"[trader] Jupiter tx submitted: {result.value}", flush=True)
-        await asyncio.sleep(3)
-        bal_after = await _get_sol_balance(rpc, keypair)
-        sol_received = bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 2
-        if sol_received > 0.001:
-            return sol_received
-        print(f"[trader] Jupiter tx landed but balance unchanged — tx likely failed", flush=True)
-        return None
+        sig = str(result.value)
+        print(f"[trader] Jupiter tx submitted: {sig}", flush=True)
+        return sig
     except Exception as e:
         print(f"[trader] Jupiter error: {e}", flush=True)
         return None
@@ -178,6 +172,28 @@ async def _get_sol_balance(rpc: AsyncClient, keypair: Keypair) -> float:
         return 0.0
 
 
+async def _tx_landed(rpc: AsyncClient, sig: str) -> bool:
+    """Best-effort check whether a submitted transaction has landed without RPC error."""
+    try:
+        resp = await rpc.get_signature_statuses([sig])
+        if not getattr(resp, "value", None):
+            return False
+        status = resp.value[0]
+        if status is None:
+            return False
+
+        err = getattr(status, "err", None)
+        if err is not None:
+            return False
+
+        conf = getattr(status, "confirmation_status", None)
+        if conf is None:
+            return True
+        return str(conf).lower() in ("processed", "confirmed", "finalized")
+    except Exception:
+        return False
+
+
 # ── Buy ────────────────────────────────────────────────────────────────────────
 
 async def buy(
@@ -187,8 +203,9 @@ async def buy(
     mint:       str,
     symbol:     str,
     amount_sol: float,
-) -> Optional[Trade]:
-    print(f"[trader] Buying {symbol} via PumpPortal: {amount_sol:.4f} SOL", flush=True)
+    ) -> Optional[Trade]:
+    buy_route = "Jupiter" if config.BONDED_ONLY else "PumpPortal"
+    print(f"[trader] Buying {symbol} via {buy_route}: {amount_sol:.4f} SOL", flush=True)
 
     # Estimate token output from bonding curve before the buy (not applicable for graduated tokens)
     token_out = 0
@@ -208,6 +225,7 @@ async def buy(
             pass
 
     sig = None
+    jupiter_sig = None
     if not config.BONDED_ONLY:
         sig = await _pumpportal_tx(session, rpc, keypair, "buy", mint, amount_sol, denom_sol=True)
 
@@ -217,31 +235,37 @@ async def buy(
         lamports = int(amount_sol * LAMPORTS)
         quote    = await _jupiter_quote(session, config.SOL_MINT, mint, lamports)
         if quote:
-            sol_out = await _jupiter_swap(session, rpc, keypair, quote)
-            if sol_out is not None:
+            jup_sig = await _jupiter_swap(session, rpc, keypair, quote)
+            if jup_sig:
                 token_out = int(quote.get("outAmount", 0))
-                sig = "jupiter"
+                jupiter_sig = jup_sig
+                sig = f"jupiter:{jup_sig}"
 
-    if not sig or (sig == "jupiter" and token_out == 0):
+    if not sig or (sig.startswith("jupiter") and token_out == 0):
         print(f"[trader] Buy failed for {symbol}", flush=True)
         return None
 
-    # Read actual token balance from chain so sells are complete (no dust)
-    if sig != "jupiter":
-        try:
-            await asyncio.sleep(2)
-            from solders.pubkey import Pubkey
-            accts = await rpc.get_token_accounts_by_owner_json_parsed(
-                keypair.pubkey(),
-                TokenAccountOpts(mint=Pubkey.from_string(mint)),
+    # Read actual token balance from chain so buy size is accurate for later sells.
+    try:
+        for _ in range(12):
+            await asyncio.sleep(1.5)
+            actual = await _token_balance(rpc, keypair, mint)
+            if actual > 0:
+                print(f"[trader] Bought {symbol}: {sig} | actual_tokens={actual} est={token_out}", flush=True)
+                return Trade(mint, symbol, actual, amount_sol)
+    except Exception as e:
+        print(f"[trader] Could not read actual token balance: {e}", flush=True)
+
+    # For Jupiter buys we require a confirmed token balance to avoid phantom fills.
+    if sig and sig.startswith("jupiter"):
+        if jupiter_sig and await _tx_landed(rpc, jupiter_sig) and token_out > 0:
+            print(
+                f"[trader] Bought {symbol}: {sig} | token account not visible yet, using est_tokens={token_out}",
+                flush=True,
             )
-            if accts.value:
-                actual = int(accts.value[0].account.data.parsed["info"]["tokenAmount"]["amount"])
-                if actual > 0:
-                    print(f"[trader] Bought {symbol}: {sig} | actual_tokens={actual} est={token_out}", flush=True)
-                    return Trade(mint, symbol, actual, amount_sol)
-        except Exception as e:
-            print(f"[trader] Could not read actual token balance: {e}", flush=True)
+            return Trade(mint, symbol, token_out, amount_sol)
+        print(f"[trader] Buy failed for {symbol}: Jupiter tx not confirmed or token balance unavailable", flush=True)
+        return None
 
     print(f"[trader] Bought {symbol}: {sig} | est_tokens={token_out}", flush=True)
     return Trade(mint, symbol, token_out, amount_sol)
