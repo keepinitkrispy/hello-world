@@ -43,8 +43,8 @@ SIGNAL_COOLDOWN_SEC = 600
 # Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
 
-CONSECUTIVE_BUYS = 3   # consecutive buys needed to fire a signal
-TRADE_WINDOW_SEC = 10  # look-back window for consecutive buys
+CONSECUTIVE_BUYS = config.MONITOR_CONSECUTIVE_BUYS
+TRADE_WINDOW_SEC = config.MOMENTUM_WINDOW_SEC
 
 
 def block_mint(mint: str) -> None:
@@ -138,7 +138,9 @@ async def _zone_poller(ws, session: aiohttp.ClientSession) -> None:
         if new:
             await _subscribe(ws, new)
         print(
-            f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total)",
+            f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total) "
+            f"| zone={config.MONITOR_BC_MIN:.1f}-{config.MONITOR_BC_MAX:.1f}% "
+            f"signal={CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
             flush=True,
         )
         await asyncio.sleep(5)

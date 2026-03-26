@@ -214,7 +214,10 @@ async def main(dry_run: bool) -> None:
 
     print(
         f"[bot] READY | zone={config.MONITOR_BC_MIN}-{config.MONITOR_BC_MAX}% "
-        f"window={config.MOMENTUM_WINDOW_SEC}s stop={config.STOP_LOSS_PCT}%",
+        f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
+        f"rise={config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}% "
+        f"filters(age>={config.MIN_AGE_SECONDS}s replies>={config.MIN_REPLY_COUNT}) "
+        f"stop={config.STOP_LOSS_PCT}%",
         flush=True,
     )
 
