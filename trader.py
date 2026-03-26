@@ -214,6 +214,23 @@ async def buy(
         print(f"[trader] Buy failed for {symbol}", flush=True)
         return None
 
+    # Read actual token balance from chain so sells are complete (no dust)
+    if sig != "jupiter":
+        try:
+            await asyncio.sleep(2)
+            from solders.pubkey import Pubkey
+            accts = await rpc.get_token_accounts_by_owner_json_parsed(
+                keypair.pubkey(),
+                {"mint": Pubkey.from_string(mint)},
+            )
+            if accts.value:
+                actual = int(accts.value[0].account.data.parsed["info"]["tokenAmount"]["amount"])
+                if actual > 0:
+                    print(f"[trader] Bought {symbol}: {sig} | actual_tokens={actual} est={token_out}", flush=True)
+                    return Trade(mint, symbol, actual, amount_sol)
+        except Exception as e:
+            print(f"[trader] Could not read actual token balance: {e}", flush=True)
+
     print(f"[trader] Bought {symbol}: {sig} | est_tokens={token_out}", flush=True)
     return Trade(mint, symbol, token_out, amount_sol)
 
