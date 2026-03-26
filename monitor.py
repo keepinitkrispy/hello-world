@@ -32,6 +32,7 @@ _HEADERS = {
 
 # Per-mint buy history: list of (timestamp, bc_pct)
 _buy_history: dict[str, list] = defaultdict(list)
+_buy_last_update: dict[str, float] = {}
 
 # Mints we've already subscribed to trade events
 _subscribed: set = set()
@@ -39,6 +40,7 @@ _subscribed: set = set()
 # Signal cooldown tracking
 _signal_times: dict[str, float] = {}
 SIGNAL_COOLDOWN_SEC = 600
+HISTORY_STALE_SEC = max(60, config.MOMENTUM_WINDOW_SEC * 6)
 
 # Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
@@ -69,6 +71,21 @@ async def _enqueue_candidate(
     seen_mints.add(mint)
     _signal_times[mint] = timestamp or time.time()
     await queue.put(coin)
+
+
+def _prune_runtime_state(seen_mints: set, now: float | None = None) -> None:
+    """Prune expired cooldown entries and stale momentum history."""
+    now = now or time.time()
+
+    expired = [m for m, t in list(_signal_times.items()) if now - t > SIGNAL_COOLDOWN_SEC]
+    for mint in expired:
+        seen_mints.discard(mint)
+        del _signal_times[mint]
+
+    stale_history = [m for m, ts in list(_buy_last_update.items()) if now - ts > HISTORY_STALE_SEC]
+    for mint in stale_history:
+        _buy_history.pop(mint, None)
+        del _buy_last_update[mint]
 
 
 def block_mint(mint: str) -> None:
@@ -183,15 +200,18 @@ async def _zone_poller(ws, session: aiohttp.ClientSession, queue: asyncio.Queue,
             await _subscribe(ws, new)
 
         # Fallback path: if WS trade events are sparse/blocked, still process in-zone mints.
+        # In BONDED_ONLY mode we intentionally do not fallback-enqueue from REST, because
+        # that bypasses the WS buy-momentum signal requirements.
         fallback_queued = 0
-        for mint in new:
-            if mint in seen_mints or mint in _permanent_blocks:
-                continue
-            coin = await _fetch_coin(session, mint)
-            if not coin:
-                continue
-            await _enqueue_candidate(queue, seen_mints, mint, coin)
-            fallback_queued += 1
+        if not config.BONDED_ONLY:
+            for mint in new:
+                if mint in seen_mints or mint in _permanent_blocks:
+                    continue
+                coin = await _fetch_coin(session, mint)
+                if not coin:
+                    continue
+                await _enqueue_candidate(queue, seen_mints, mint, coin)
+                fallback_queued += 1
 
         print(
             f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total) "
@@ -199,6 +219,7 @@ async def _zone_poller(ws, session: aiohttp.ClientSession, queue: asyncio.Queue,
             f"| {_signal_profile()}",
             flush=True,
         )
+        _prune_runtime_state(seen_mints)
         await asyncio.sleep(5)
 
 
@@ -228,6 +249,7 @@ async def _handle_event(
         now     = time.time()
         history = _buy_history[mint]
         history.append((now, 0.0))
+        _buy_last_update[mint] = now
         cutoff             = now - config.MOMENTUM_WINDOW_SEC
         _buy_history[mint] = [(t, bc) for t, bc in history if t >= cutoff]
         if len(_buy_history[mint]) < config.MONITOR_CONSECUTIVE_BUYS:
@@ -270,6 +292,7 @@ async def _handle_event(
     now     = time.time()
     history = _buy_history[mint]
     history.append((now, bc_pct))
+    _buy_last_update[mint] = now
 
     # Trim to window
     cutoff             = now - config.MOMENTUM_WINDOW_SEC
@@ -320,12 +343,7 @@ async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
                         except json.JSONDecodeError:
                             continue
 
-                        # Expire cooldowns
-                        now     = time.time()
-                        expired = [m for m, t in list(_signal_times.items()) if now - t > SIGNAL_COOLDOWN_SEC]
-                        for m in expired:
-                            seen_mints.discard(m)
-                            del _signal_times[m]
+                        _prune_runtime_state(seen_mints)
 
                         await _handle_event(event, ws, session, queue, seen_mints)
 
