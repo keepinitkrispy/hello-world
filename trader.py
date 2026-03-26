@@ -277,7 +277,7 @@ async def sell(
         # PumpPortal fallback
         print(f"[trader] Jupiter sell attempt {attempt} failed, trying PumpPortal…", flush=True)
         sig = await _pumpportal_tx(
-            session, rpc, keypair, "sell", trade.mint, "100%", denom_sol=False,
+            session, rpc, keypair, "sell", trade.mint, "trade.token_amount", denom_sol=False,
             slippage=sell_slippage_pct,
         )
         if sig:
