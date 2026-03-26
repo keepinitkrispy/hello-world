@@ -53,6 +53,19 @@ def _signal_profile() -> str:
     )
 
 
+async def _enqueue_candidate(
+    queue: asyncio.Queue,
+    seen_mints: set,
+    mint: str,
+    coin: dict,
+    timestamp: float | None = None,
+) -> None:
+    """Queue a mint exactly once and start cooldown tracking."""
+    seen_mints.add(mint)
+    _signal_times[mint] = timestamp or time.time()
+    await queue.put(coin)
+
+
 def block_mint(mint: str) -> None:
     """Permanently block a mint from re-signaling this session (called after stop-loss exit)."""
     _permanent_blocks.add(mint)
@@ -165,9 +178,7 @@ async def _zone_poller(ws, session: aiohttp.ClientSession, queue: asyncio.Queue,
             coin = await _fetch_coin(session, mint)
             if not coin:
                 continue
-            seen_mints.add(mint)
-            _signal_times[mint] = time.time()
-            await queue.put(coin)
+            await _enqueue_candidate(queue, seen_mints, mint, coin)
             fallback_queued += 1
 
         print(
@@ -245,9 +256,7 @@ async def _handle_event(
         flush=True,
     )
 
-    seen_mints.add(mint)
-    _signal_times[mint] = now
-    await queue.put(coin)
+    await _enqueue_candidate(queue, seen_mints, mint, coin, timestamp=now)
 
 
 async def _run_ws(queue: asyncio.Queue, seen_mints: set) -> None:
