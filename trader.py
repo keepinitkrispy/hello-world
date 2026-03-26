@@ -229,7 +229,7 @@ async def buy(
             from solders.pubkey import Pubkey
             accts = await rpc.get_token_accounts_by_owner_json_parsed(
                 keypair.pubkey(),
-                {"mint": Pubkey.from_string(mint)},
+                TokenAccountOpts(mint=Pubkey.from_string(mint)),
             )
             if accts.value:
                 actual = int(accts.value[0].account.data.parsed["info"]["tokenAmount"]["amount"])
