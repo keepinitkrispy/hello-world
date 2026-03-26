@@ -49,13 +49,15 @@ async def _monitor_existing(session, rpc, keypair, trade, active):
 async def _handle(session, rpc, keypair, coin, dry_run, active):
     mint   = coin.get("mint")
     symbol = coin.get("symbol", "???")
-    trade           = None   # set only after a successful buy
-    _position_sold  = False
+    trade          = None
+    _position_sold = False
     _stop_loss_exit = False
+
     try:
         ok, reason = await filters.passes_all(session, rpc, coin)
         if not ok:
             return
+
         if dry_run:
             print(f"[bot] [DRY RUN] PASS {symbol}", flush=True)
             return
@@ -70,15 +72,21 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
             print(f"[bot] Skipping {symbol} — only {spendable:.4f} SOL spendable", flush=True)
             return
 
-        print(f"[bot] Buying {symbol} | bal={balance_sol:.4f} spendable={spendable:.4f} bet={buy_amount:.4f} SOL", flush=True)
+        print(
+            f"[bot] Buying {symbol} | bal={balance_sol:.4f} spendable={spendable:.4f} bet={buy_amount:.4f} SOL",
+            flush=True,
+        )
+
         trade = await trader.buy(session, rpc, keypair, mint, symbol, buy_amount)
         if trade is None:
             return
+
         positions.record(trade)
 
         peak_pnl      = 0.0
         peak_pnl_time = time.time()
         none_since    = None
+
         while True:
             await asyncio.sleep(config.POSITION_POLL_SEC)
             elapsed = trade.elapsed()
@@ -93,16 +101,36 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                 if none_since is None:
                     none_since = time.time()
                 elif time.time() - none_since >= 10:
-                    sol_back = await trader.sell(session, rpc, keypair, trade, "NO PRICE 30s")
+                    sol_back = await trader.sell(session, rpc, keypair, trade, "NO PRICE 10s")
                     _position_sold = sol_back > 0
                     break
                 continue
+
             none_since = None
             pnl = trade.pnl_pct(value)
+
             if pnl > peak_pnl:
                 peak_pnl      = pnl
                 peak_pnl_time = time.time()
-            print(f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% held={elapsed:.0f}s", flush=True)
+
+            print(
+                f"[bot] {symbol} P&L={pnl:+.1f}% peak={peak_pnl:+.1f}% held={elapsed:.0f}s",
+                flush=True,
+            )
+
+            # House money: sell 50% at +10%, let the rest ride free
+            if pnl >= 10.0 and not trade._half_sold:
+                sol_back = await trader.sell_partial(
+                    session, rpc, keypair, trade, 0.5, "HOUSE MONEY +10%"
+                )
+                if sol_back > 0:
+                    trade._half_sold = True
+                    if config.PARK_PROFITS and sol_back > trade.sol_spent * 0.5:
+                        gain  = sol_back - trade.sol_spent * 0.5
+                        total = profits.add(gain)
+                        print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
+                # Continue managing the remaining 50%
+                continue
 
             # Dynamic stop: full -5% for first 30s, tightens to -3% after
             dyn_stop = config.STOP_LOSS_PCT if elapsed < 30 else max(3.0, config.STOP_LOSS_PCT * 0.6)
@@ -115,29 +143,47 @@ async def _handle(session, rpc, keypair, coin, dry_run, active):
                     total = profits.add(gain)
                     print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
+
             elif peak_pnl >= config.TRAIL_ACTIVATE_PCT and pnl <= peak_pnl - config.TRAIL_DRAWDOWN_PCT:
-                sol_back = await trader.sell(session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)")
+                sol_back = await trader.sell(
+                    session, rpc, keypair, trade, f"TRAILING STOP (peak {peak_pnl:+.1f}%)"
+                )
                 _position_sold = sol_back > 0
                 if config.PARK_PROFITS and sol_back > trade.sol_spent:
                     gain  = sol_back - trade.sol_spent
                     total = profits.add(gain)
                     print(f"[bot] Parked +{gain:.4f} SOL (running total: {total:.4f} SOL)", flush=True)
                 break
-            elif pnl > 0.5 and elapsed >= 20 and time.time() - peak_pnl_time > 30:
-                sol_back = await trader.sell(session, rpc, keypair, trade, "MOMENTUM STALL")
+
+            elif (
+                elapsed >= 15
+                and time.time() - peak_pnl_time > config.MOMENTUM_STALL_PEAK_AGE_SEC
+                and peak_pnl < config.PROFIT_TARGET_PCT
+            ):
+                # No new high in MOMENTUM_STALL_PEAK_AGE_SEC seconds — get out
+                sol_back = await trader.sell(
+                    session, rpc, keypair, trade,
+                    f"MOMENTUM STALL (peak {peak_pnl:+.1f}% {config.MOMENTUM_STALL_PEAK_AGE_SEC}s ago)",
+                )
                 _position_sold = sol_back > 0
                 break
+
             elif pnl <= -dyn_stop:
                 _stop_loss_exit = True
-                sol_back = await trader.sell(session, rpc, keypair, trade, f"STOP LOSS ({dyn_stop:.0f}%)")
+                sol_back = await trader.sell(
+                    session, rpc, keypair, trade, f"STOP LOSS ({dyn_stop:.0f}%)"
+                )
                 _position_sold = sol_back > 0
                 break
+
     finally:
         if _position_sold:
             positions.remove(mint)
         elif trade is not None:
-            # Buy succeeded but all sell attempts failed — keep in positions.json for recovery
-            print(f"[bot] Sell failed for {symbol} — position kept in positions.json for recovery", flush=True)
+            print(
+                f"[bot] Sell failed for {symbol} — position kept in positions.json for recovery",
+                flush=True,
+            )
         active.discard(mint)
         if _stop_loss_exit:
             monitor.block_mint(mint)
@@ -152,7 +198,10 @@ async def main(dry_run: bool) -> None:
         balance_sol  = balance_resp.value / 1_000_000_000
         parked_total = profits.load()
         spendable    = max(0.0, balance_sol - config.GAS_RESERVE_SOL - parked_total)
-        print(f"[bot] Balance={balance_sol:.4f} SOL parked={parked_total:.4f} SOL spendable={spendable:.4f} SOL", flush=True)
+        print(
+            f"[bot] Balance={balance_sol:.4f} SOL parked={parked_total:.4f} SOL spendable={spendable:.4f} SOL",
+            flush=True,
+        )
         if spendable < config.MIN_TRADE_SOL:
             print(f"[bot] !! Too low — fund {kp.pubkey()} then restart", flush=True)
             sys.exit(1)
@@ -160,17 +209,20 @@ async def main(dry_run: bool) -> None:
         rpc = None
         print("[bot] DRY RUN", flush=True)
 
-    print(f"[bot] READY | zone={config.MONITOR_BC_MIN}-{config.MONITOR_BC_MAX}% window={config.MOMENTUM_WINDOW_SEC}s stop={config.STOP_LOSS_PCT}%", flush=True)
+    print(
+        f"[bot] READY | zone={config.MONITOR_BC_MIN}-{config.MONITOR_BC_MAX}% "
+        f"window={config.MOMENTUM_WINDOW_SEC}s stop={config.STOP_LOSS_PCT}%",
+        flush=True,
+    )
 
-    queue        = asyncio.Queue()
-    seen_mints:  set = set()
+    queue         = asyncio.Queue()
+    seen_mints:   set = set()
     active_mints: set = set()
 
     mt = asyncio.create_task(monitor.run(queue, seen_mints), name="monitor")
     mt.add_done_callback(_task_error_handler)
 
     async with aiohttp.ClientSession() as session:
-        # Recover any positions that survived a restart
         orphans = positions.load_open()
         if orphans:
             print(f"[bot] Recovering {len(orphans)} position(s) from previous run", flush=True)
@@ -181,9 +233,10 @@ async def main(dry_run: bool) -> None:
             seen_mints.add(p["mint"])
             task = asyncio.create_task(
                 _monitor_existing(session, rpc, kp, t, active_mints),
-                name=f"recover-{p['mint'][:8]}"
+                name=f"recover-{p['mint'][:8]}",
             )
             task.add_done_callback(_task_error_handler)
+
         try:
             while True:
                 try:
@@ -191,11 +244,16 @@ async def main(dry_run: bool) -> None:
                 except asyncio.TimeoutError:
                     print("[bot] heartbeat — watching...", flush=True)
                     continue
+
                 mint = coin.get("mint")
                 if mint and mint not in active_mints:
                     active_mints.add(mint)
-                    t = asyncio.create_task(_handle(session, rpc, kp, coin, dry_run, active_mints), name=f"handle-{mint[:8]}")
+                    t = asyncio.create_task(
+                        _handle(session, rpc, kp, coin, dry_run, active_mints),
+                        name=f"handle-{mint[:8]}",
+                    )
                     t.add_done_callback(_task_error_handler)
+
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:

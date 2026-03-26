@@ -10,7 +10,7 @@ from solana.rpc.types import TxOpts
 
 import config
 
-PUMPPORTAL  = "https://pumpportal.fun/api/trade-local"
+PUMPPORTAL    = "https://pumpportal.fun/api/trade-local"
 JUPITER_QUOTE = "https://lite-api.jup.ag/swap/v1/quote"
 JUPITER_SWAP  = "https://lite-api.jup.ag/swap/v1/swap"
 LAMPORTS      = 1_000_000_000
@@ -19,11 +19,11 @@ LAMPORTS      = 1_000_000_000
 # ── PumpPortal (primary) ───────────────────────────────────────────────────────
 
 async def _pumpportal_tx(
-    session:  aiohttp.ClientSession,
-    rpc:      AsyncClient,
-    keypair:  Keypair,
-    action:   str,
-    mint:     str,
+    session:   aiohttp.ClientSession,
+    rpc:       AsyncClient,
+    keypair:   Keypair,
+    action:    str,
+    mint:      str,
     amount,
     denom_sol: bool,
 ) -> Optional[str]:
@@ -34,7 +34,7 @@ async def _pumpportal_tx(
         "denominatedInSol": "true" if denom_sol else "false",
         "amount":           amount,
         "slippage":         15,
-        "priorityFee":      0.001,
+        "priorityFee":      config.PRIORITY_FEE_LAMPORTS / LAMPORTS,  # PumpPortal takes SOL float
         "pool":             "pump",
     }
     try:
@@ -79,19 +79,22 @@ async def _jupiter_quote(session, input_mint, output_mint, amount):
         return None
 
 
-async def _jupiter_swap(session, rpc, keypair, quote):
+async def _jupiter_swap(session, rpc, keypair, quote) -> Optional[float]:
+    """Execute Jupiter swap. Returns SOL received on success, None on failure."""
     import base64
     body = {
         "quoteResponse":             quote,
         "userPublicKey":             str(keypair.pubkey()),
         "wrapAndUnwrapSol":          True,
-        "prioritizationFeeLamports": config.PRIORITY_FEE,
+        "prioritizationFeeLamports": config.PRIORITY_FEE_LAMPORTS,
     }
     try:
         async with session.post(
             JUPITER_SWAP, json=body, timeout=aiohttp.ClientTimeout(total=15)
         ) as resp:
             if resp.status != 200:
+                err = await resp.text()
+                print(f"[trader] Jupiter swap {resp.status}: {err[:200]}", flush=True)
                 return None
             data = await resp.json()
         tx_bytes  = base64.b64decode(data["swapTransaction"])
@@ -101,7 +104,8 @@ async def _jupiter_swap(session, rpc, keypair, quote):
             bytes(signed_tx),
             opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"),
         )
-        return str(result.value)
+        print(f"[trader] Jupiter tx submitted: {result.value}", flush=True)
+        return int(quote.get("outAmount", 0)) / LAMPORTS
     except Exception as e:
         print(f"[trader] Jupiter error: {e}", flush=True)
         return None
@@ -113,9 +117,10 @@ class Trade:
     def __init__(self, mint: str, symbol: str, token_amount: int, sol_spent: float):
         self.mint         = mint
         self.symbol       = symbol
-        self.token_amount = token_amount  # raw units, kept for Jupiter fallback
+        self.token_amount = token_amount
         self.sol_spent    = sol_spent
         self._entry_time  = time.time()
+        self._half_sold   = False  # tracks whether the 50% house-money sell has fired
 
     def elapsed(self) -> float:
         return time.time() - self._entry_time
@@ -155,7 +160,17 @@ async def current_value_sol(session: aiohttp.ClientSession, trade: Trade) -> Opt
     return None
 
 
-# ── Buy / Sell ────────────────────────────────────────────────────────────────
+# ── Balance helper ────────────────────────────────────────────────────────────
+
+async def _get_sol_balance(rpc: AsyncClient, keypair: Keypair) -> float:
+    try:
+        resp = await rpc.get_balance(keypair.pubkey())
+        return resp.value / LAMPORTS
+    except Exception:
+        return 0.0
+
+
+# ── Buy ────────────────────────────────────────────────────────────────────────
 
 async def buy(
     session:    aiohttp.ClientSession,
@@ -166,42 +181,44 @@ async def buy(
     amount_sol: float,
 ) -> Optional[Trade]:
     print(f"[trader] Buying {symbol} via PumpPortal: {amount_sol:.4f} SOL", flush=True)
+
+    # Estimate token output from bonding curve before the buy
+    token_out = 0
+    try:
+        async with session.get(
+            f"https://frontend-api-v3.pump.fun/coins/{mint}",
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as resp:
+            if resp.status == 200:
+                coin = await resp.json(content_type=None)
+                vsol = coin.get("virtual_sol_reserves") or 1
+                vtok = coin.get("virtual_token_reserves") or 1
+                amount_lamports = int(amount_sol * LAMPORTS)
+                token_out = int(vtok * amount_lamports / (vsol + amount_lamports))
+    except Exception:
+        pass
+
     sig = await _pumpportal_tx(session, rpc, keypair, "buy", mint, amount_sol, denom_sol=True)
 
     if not sig:
-        # Fallback: Jupiter
         print(f"[trader] PumpPortal buy failed, trying Jupiter…", flush=True)
         lamports = int(amount_sol * LAMPORTS)
         quote    = await _jupiter_quote(session, config.SOL_MINT, mint, lamports)
         if quote:
-            sig = await _jupiter_swap(session, rpc, keypair, quote)
-            token_out = int(quote.get("outAmount", 0))
-        else:
-            token_out = 0
-    else:
-        # Estimate token amount from curve for tracking
-        dummy = Trade(mint, symbol, 0, amount_sol)
-        val   = await _pumpfun_value_sol(session, dummy)
-        # Approximate raw token amount from reserves
-        try:
-            async with session.get(
-                f"https://frontend-api-v3.pump.fun/coins/{mint}",
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                coin = await resp.json(content_type=None) if resp.status == 200 else {}
-            vsol = coin.get("virtual_sol_reserves") or 1
-            vtok = coin.get("virtual_token_reserves") or 1
-            token_out = int((amount_sol * LAMPORTS) / vsol * vtok)
-        except Exception:
-            token_out = 0
+            sol_out = await _jupiter_swap(session, rpc, keypair, quote)
+            if sol_out is not None:
+                token_out = int(quote.get("outAmount", 0))
+                sig = "jupiter"
 
-    if not sig:
+    if not sig or (sig == "jupiter" and token_out == 0):
         print(f"[trader] Buy failed for {symbol}", flush=True)
         return None
 
-    print(f"[trader] Bought {symbol}: {sig}", flush=True)
+    print(f"[trader] Bought {symbol}: {sig} | est_tokens={token_out}", flush=True)
     return Trade(mint, symbol, token_out, amount_sol)
 
+
+# ── Sell ───────────────────────────────────────────────────────────────────────
 
 async def sell(
     session: aiohttp.ClientSession,
@@ -210,32 +227,104 @@ async def sell(
     trade:   Trade,
     reason:  str,
 ) -> float:
-    """Sell with up to 3 attempts. Returns SOL received."""
-    # Get current value for logging
+    """Sell with up to 3 attempts. Returns SOL received (measured via balance delta)."""
     value = await current_value_sol(session, trade)
     pnl   = trade.pnl_pct(value) if value else 0
-    print(f"[trader] Selling {trade.symbol} [{reason}] | est {value:.4f} SOL | P&L {pnl:+.1f}%", flush=True)
+    print(
+        f"[trader] Selling {trade.symbol} [{reason}] | est {value:.4f} SOL | P&L {pnl:+.1f}%",
+        flush=True,
+    )
+
+    bal_before = await _get_sol_balance(rpc, keypair)
 
     for attempt in range(1, 4):
-        # PumpPortal: sell 100% of position
         sig = await _pumpportal_tx(
             session, rpc, keypair, "sell", trade.mint, "100%", denom_sol=False
         )
         if sig:
-            print(f"[trader] Sold {trade.symbol}: {sig}", flush=True)
-            return value or 0.0
+            await asyncio.sleep(2)
+            bal_after    = await _get_sol_balance(rpc, keypair)
+            sol_received = bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 2
+            if sol_received > 0.001:
+                print(
+                    f"[trader] Sold {trade.symbol}: {sig} | received {sol_received:.4f} SOL",
+                    flush=True,
+                )
+                return sol_received
+            print(
+                f"[trader] Sig returned but balance unchanged (attempt {attempt}) — retrying",
+                flush=True,
+            )
+            bal_before = bal_after
 
-        print(f"[trader] PumpPortal sell failed (attempt {attempt}), trying Jupiter…", flush=True)
-        # Jupiter fallback
+        print(f"[trader] PumpPortal sell attempt {attempt} failed, trying Jupiter…", flush=True)
         quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, trade.token_amount)
         if quote:
-            sig = await _jupiter_swap(session, rpc, keypair, quote)
-            if sig:
-                sol_out = int(quote.get("outAmount", 0)) / LAMPORTS
-                print(f"[trader] Sold {trade.symbol} via Jupiter: {sig}", flush=True)
+            sol_out = await _jupiter_swap(session, rpc, keypair, quote)
+            if sol_out is not None and sol_out > 0.001:
+                print(f"[trader] Sold {trade.symbol} via Jupiter: {sol_out:.4f} SOL", flush=True)
                 return sol_out
 
         await asyncio.sleep(2)
 
     print(f"[trader] GAVE UP selling {trade.symbol} after 3 attempts", flush=True)
+    return 0.0
+
+
+# ── Partial sell (house money) ─────────────────────────────────────────────────
+
+async def sell_partial(
+    session:  aiohttp.ClientSession,
+    rpc:      AsyncClient,
+    keypair:  Keypair,
+    trade:    Trade,
+    pct:      float,
+    reason:   str,
+) -> float:
+    """
+    Sell `pct` fraction of the position (0.0–1.0). Updates trade.token_amount in place.
+    Returns SOL received.
+    """
+    tokens_to_sell = int(trade.token_amount * pct)
+    if tokens_to_sell == 0:
+        return 0.0
+
+    value = await current_value_sol(session, trade)
+    print(
+        f"[trader] Partial sell {trade.symbol} {pct*100:.0f}% [{reason}] "
+        f"| full est {value:.4f} SOL",
+        flush=True,
+    )
+
+    bal_before = await _get_sol_balance(rpc, keypair)
+
+    sig = await _pumpportal_tx(
+        session, rpc, keypair, "sell", trade.mint, tokens_to_sell, denom_sol=False
+    )
+    if sig:
+        await asyncio.sleep(2)
+        bal_after    = await _get_sol_balance(rpc, keypair)
+        sol_received = bal_after - bal_before + config.GAS_COST_ROUNDTRIP_SOL / 4
+        if sol_received > 0.001:
+            trade.token_amount -= tokens_to_sell
+            print(
+                f"[trader] Partial sold {trade.symbol}: {sol_received:.4f} SOL "
+                f"| remaining tokens: {trade.token_amount}",
+                flush=True,
+            )
+            return sol_received
+
+    # Fallback: Jupiter partial
+    quote = await _jupiter_quote(session, trade.mint, config.SOL_MINT, tokens_to_sell)
+    if quote:
+        sol_out = await _jupiter_swap(session, rpc, keypair, quote)
+        if sol_out is not None and sol_out > 0.001:
+            trade.token_amount -= tokens_to_sell
+            print(
+                f"[trader] Partial sold {trade.symbol} via Jupiter: {sol_out:.4f} SOL",
+                flush=True,
+            )
+            return sol_out
+
+    print(f"[trader] Partial sell failed for {trade.symbol}", flush=True)
     return 0.0
