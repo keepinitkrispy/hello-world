@@ -212,15 +212,15 @@ async def main(dry_run: bool) -> None:
         rpc = None
         print("[bot] DRY RUN", flush=True)
 
-    ready_profile = (
+    print(
         f"[bot] READY | zone={config.MONITOR_BC_MIN}-{config.MONITOR_BC_MAX}% "
         f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s "
         f"rise={config.MIN_BC_RISE_PCT}-{config.MAX_BC_RISE_PCT}% "
         f"filters(age>={config.MIN_AGE_SECONDS}s replies>={config.MIN_REPLY_COUNT}) "
         f"park_profits={config.PARK_PROFITS} "
-        f"stop={config.STOP_LOSS_PCT}%"
+        f"stop={config.STOP_LOSS_PCT}%",
+        flush=True,
     )
-    print(ready_profile, flush=True)
 
     queue         = asyncio.Queue()
     seen_mints:   set = set()

@@ -43,10 +43,6 @@ SIGNAL_COOLDOWN_SEC = 600
 # Permanent session blocks (set after stop-loss exits)
 _permanent_blocks: set = set()
 
-CONSECUTIVE_BUYS = config.MONITOR_CONSECUTIVE_BUYS
-TRADE_WINDOW_SEC = config.MOMENTUM_WINDOW_SEC
-
-
 def block_mint(mint: str) -> None:
     """Permanently block a mint from re-signaling this session (called after stop-loss exit)."""
     _permanent_blocks.add(mint)
@@ -168,7 +164,7 @@ async def _zone_poller(ws, session: aiohttp.ClientSession, queue: asyncio.Queue,
             f"[monitor] Zone poll: {len(mints)} in zone, +{len(new)} new ({len(_subscribed)} total) "
             f"| queued={fallback_queued} "
             f"| zone={config.MONITOR_BC_MIN:.1f}-{config.MONITOR_BC_MAX:.1f}% "
-            f"signal={CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
+            f"signal={config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s",
             flush=True,
         )
         await asyncio.sleep(5)
@@ -215,11 +211,11 @@ async def _handle_event(
     history.append((now, bc_pct))
 
     # Trim to window
-    cutoff             = now - TRADE_WINDOW_SEC
+    cutoff             = now - config.MOMENTUM_WINDOW_SEC
     _buy_history[mint] = [(t, bc) for t, bc in history if t >= cutoff]
     history            = _buy_history[mint]
 
-    if len(history) < CONSECUTIVE_BUYS:
+    if len(history) < config.MONITOR_CONSECUTIVE_BUYS:
         return
 
     # BC must be rising over the window — not too slow, not too fast (rug pump)
@@ -236,7 +232,8 @@ async def _handle_event(
     symbol = coin.get("symbol") or event.get("symbol") or "???"
     print(
         f"[monitor] WS SIGNAL {symbol} ({mint[:8]}…) "
-        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | {CONSECUTIVE_BUYS} buys/{TRADE_WINDOW_SEC}s",
+        f"BC={bc_pct:.1f}% +{bc_rise:.2f}pts | "
+        f"{config.MONITOR_CONSECUTIVE_BUYS} buys/{config.MOMENTUM_WINDOW_SEC}s",
         flush=True,
     )
 
