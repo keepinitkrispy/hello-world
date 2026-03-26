@@ -78,9 +78,7 @@ async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps:
             return await resp.json() if resp.status == 200 else None
     except Exception:
         return None
-
-
-async def _jupiter_submit(
+    async def _jupiter_submit(
     session: aiohttp.ClientSession,
     rpc: AsyncClient,
     keypair: Keypair,
@@ -182,32 +180,20 @@ async def _tx_landed(rpc: AsyncClient, sig: str) -> bool:
     try:
         resp = await rpc.get_signature_statuses([sig])
         if not getattr(resp, "value", None):
-            print(f"[trader] _tx_landed: no status for {sig}", flush=True)
             return False
         status = resp.value[0]
         if status is None:
-            print(f"[trader] _tx_landed: empty status for {sig}", flush=True)
             return False
 
-        if isinstance(status, dict):
-            err = status.get("err")
-            conf = status.get("confirmationStatus")
-        else:
-            err = getattr(status, "err", None)
-            conf = getattr(status, "confirmation_status", None)
-
+        err = getattr(status, "err", None)
         if err is not None:
-            print(f"[trader] _tx_landed: tx {sig} has err={err}", flush=True)
             return False
 
+        conf = getattr(status, "confirmation_status", None)
         if conf is None:
-            print(f"[trader] _tx_landed: tx {sig} landed (no confirmation status field)", flush=True)
             return True
-        landed = str(conf).lower() in ("processed", "confirmed", "finalized")
-        print(f"[trader] _tx_landed: tx {sig} confirmation={conf} landed={landed}", flush=True)
-        return landed
+        return str(conf).lower() in ("processed", "confirmed", "finalized")
     except Exception:
-        print(f"[trader] _tx_landed: status check failed for {sig}", flush=True)
         return False
 
 
@@ -251,16 +237,11 @@ async def buy(
             print(f"[trader] PumpPortal buy failed, trying Jupiter…", flush=True)
         lamports = int(amount_sol * LAMPORTS)
         quote    = await _jupiter_quote(session, config.SOL_MINT, mint, lamports)
-        if not quote:
-            print(f"[trader] Jupiter quote unavailable for {symbol}", flush=True)
-        else:
-            jup_sig = await _jupiter_submit(session, rpc, keypair, quote)
+        if quote:
+            jup_sig = await _jupiter_swap(session, rpc, keypair, quote)
             if jup_sig:
                 token_out = int(quote.get("outAmount", 0))
-                jupiter_sig = jup_sig
                 sig = f"jupiter:{jup_sig}"
-            else:
-                print(f"[trader] Jupiter submit failed for {symbol}", flush=True)
 
     if not sig or (sig.startswith("jupiter") and token_out == 0):
         print(f"[trader] Buy failed for {symbol}", flush=True)
@@ -268,25 +249,18 @@ async def buy(
 
     # Read actual token balance from chain so buy size is accurate for later sells.
     try:
-        for _ in range(12):
-            await asyncio.sleep(1.5)
+        for _ in range(4):
+            await asyncio.sleep(1)
             actual = await _token_balance(rpc, keypair, mint)
             if actual > 0:
                 print(f"[trader] Bought {symbol}: {sig} | actual_tokens={actual} est={token_out}", flush=True)
                 return Trade(mint, symbol, actual, amount_sol)
-        print(f"[trader] Token balance still unavailable after polling for {symbol}", flush=True)
     except Exception as e:
         print(f"[trader] Could not read actual token balance: {e}", flush=True)
 
     # For Jupiter buys we require a confirmed token balance to avoid phantom fills.
     if sig and sig.startswith("jupiter"):
-        if jupiter_sig and await _tx_landed(rpc, jupiter_sig) and token_out > 0:
-            print(
-                f"[trader] Bought {symbol}: {sig} | token account not visible yet, using est_tokens={token_out}",
-                flush=True,
-            )
-            return Trade(mint, symbol, token_out, amount_sol)
-        print(f"[trader] Buy failed for {symbol}: Jupiter tx not confirmed or token balance unavailable", flush=True)
+        print(f"[trader] Buy failed for {symbol}: Jupiter tx submitted but token balance not confirmed", flush=True)
         return None
 
     print(f"[trader] Bought {symbol}: {sig} | est_tokens={token_out}", flush=True)
