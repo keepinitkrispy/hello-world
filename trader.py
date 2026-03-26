@@ -64,7 +64,7 @@ async def _pumpportal_tx(
 
 # ── Jupiter (fallback for graduated tokens) ───────────────────────────────────
 
-async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps: int = None):
+    async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps: int = None):
     params = {
         "inputMint":   input_mint,
         "outputMint":  output_mint,
@@ -78,7 +78,7 @@ async def _jupiter_quote(session, input_mint, output_mint, amount, slippage_bps:
             return await resp.json() if resp.status == 200 else None
     except Exception:
         return None
-    async def _jupiter_submit(
+        async def _jupiter_submit(
     session: aiohttp.ClientSession,
     rpc: AsyncClient,
     keypair: Keypair,
