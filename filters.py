@@ -69,7 +69,7 @@ async def _check_holder_safety(rpc: AsyncClient, mint: str, coin: dict) -> tuple
         total_supply = float(coin.get("total_supply") or 1_000_000_000)
         top3 = sum(float(a.amount.ui_amount or 0) for a in accounts[:3])
         top3_pct = top3 / total_supply * 100
-        if top3_pct > 50:
+        if top3_pct > 40:
             return False, f"top3 hold {top3_pct:.0f}%"
         return True, ""
     except Exception:

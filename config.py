@@ -15,7 +15,7 @@ MONITOR_BC_MAX = 88
 
 MOMENTUM_WINDOW_SEC = 15
 MIN_BC_RISE_PCT = 1.0
-MAX_BC_RISE_PCT = 20.0  # reject coordinated pump signals
+MAX_BC_RISE_PCT = 15.0  # reject coordinated pump signals
 
 PROFIT_TARGET_PCT = 8
 STOP_LOSS_PCT = 5
