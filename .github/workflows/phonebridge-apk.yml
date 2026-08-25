@@ -1,0 +1,49 @@
+name: Build PhoneBridge APK
+
+on:
+  push:
+    branches: [phone-bridge]
+    paths:
+      - 'phonebridge/android_project.tar.gz.b64'
+      - '.github/workflows/phonebridge-apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phone-bridge
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Unpack source
+        run: |
+          mkdir -p /tmp/phonebridge-src
+          base64 -d phonebridge/android_project.tar.gz.b64 | tar -xzf - -C /tmp/phonebridge-src
+      - name: Build debug APK
+        run: gradle -p /tmp/phonebridge-src :app:assembleDebug --no-daemon --stacktrace
+      - name: Publish tested APK and command channel
+        run: |
+          cp /tmp/phonebridge-src/app/build/outputs/apk/debug/app-debug.apk phonebridge/PhoneBridge.apk
+          mkdir -p phonebridge/runtime
+          if [ ! -f phonebridge/runtime/commands.json ]; then
+            printf '%s\n' '{"seq":0,"action":"sync","include":[]}' > phonebridge/runtime/commands.json
+          fi
+          git config user.name 'PhoneBridge Builder'
+          git config user.email 'actions@users.noreply.github.com'
+          git add phonebridge/PhoneBridge.apk phonebridge/runtime/commands.json
+          if ! git diff --cached --quiet; then
+            git commit -m '[apk] publish tested PhoneBridge build'
+            git push origin HEAD:phone-bridge
+          fi

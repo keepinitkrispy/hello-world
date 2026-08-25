@@ -1,0 +1,1 @@
+PhoneBridge direct-source build input. This file exists to make the verified build path explicit; no encoded source archive is required.

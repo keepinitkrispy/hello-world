@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Phone Bridge</string>
+    <string name="accessibility_description">Optional Phone Bridge accessibility layer. It records the current visible UI locally and allows a small allowlist of explicit navigation actions (Home/Back) requested through the bridge. It does not execute arbitrary shell commands.</string>
+</resources>
