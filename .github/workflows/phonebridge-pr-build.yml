@@ -1,0 +1,39 @@
+name: PhoneBridge PR Build
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'phonebridge/android_project.tar.gz.b64'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Unpack source
+        run: |
+          mkdir -p /tmp/phonebridge-src
+          base64 -d phonebridge/android_project.tar.gz.b64 | tar -xzf - -C /tmp/phonebridge-src
+      - name: Build APK
+        run: gradle -p /tmp/phonebridge-src :app:assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneBridge-apk
+          path: /tmp/phonebridge-src/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
