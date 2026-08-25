@@ -24,16 +24,29 @@ if ! command -v termux-battery-status >/dev/null 2>&1; then
 fi
 
 if ! pm list packages 2>/dev/null | grep -q '^package:com.termux.api$'; then
-  warn "ACTION NEEDED: install the Termux:API Android app from the same source as Termux, then rerun this one command."
+  warn "ACTION NEEDED: install the Termux:API Android app from the SAME source as Termux, then rerun this one command."
   printf '%s\n' 'https://f-droid.org/packages/com.termux.api/'
   exit 21
 fi
 
 say "Checking Android API connection"
 if ! timeout 10 termux-battery-status >/dev/null 2>&1; then
-  warn "Android has not granted Termux:API access yet. Opening its app settings. Grant requested permissions, then return to Termux and rerun the same bootstrap command."
+  warn "Android has not granted Termux:API access yet. Opening its app settings. Grant the permissions you want bridged, return to Termux, then rerun this same command."
   am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:com.termux.api >/dev/null 2>&1 || true
   exit 22
+fi
+
+say "Permission warm-up — just tap Allow on Android prompts"
+timeout 20 termux-call-log -l 1 >/dev/null 2>&1 || true
+timeout 20 termux-sms-list -l 1 -t all >/dev/null 2>&1 || true
+timeout 20 termux-location -p network -r last >/dev/null 2>&1 || true
+timeout 12 termux-telephony-deviceinfo >/dev/null 2>&1 || true
+
+if ! timeout 8 termux-notification-list >/dev/null 2>&1; then
+  warn "One special permission: Android is opening Notification access. Turn ON Termux:API, then come back to Termux and press Enter once."
+  am start -a android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS >/dev/null 2>&1 || true
+  read -r -p "After enabling Termux:API notification access, press Enter: " _
+  timeout 8 termux-notification-list >/dev/null 2>&1 || true
 fi
 
 say "Connecting the bridge to your private GitHub control channel"
@@ -77,7 +90,8 @@ for _ in $(seq 1 6); do
   BODY="$(gh api repos/keepinitkrispy/antiLLM/issues/1 --jq '.body' 2>/dev/null || true)"
   if printf '%s' "$BODY" | grep -q '"status": "online"'; then
     say "PHONE BRIDGE READY"
-    printf '%s\n' "Core bridge is online. Call-log/SMS/notification/location permissions are tested individually by the agent and reported as capabilities."
+    printf '%s\n' "Core bridge is online and has reported its actual capabilities from this device."
+    printf '%s\n' "Install/open Termux:Boot once if you want automatic restart after phone reboots."
     printf '%s\n' "Optional next upgrade: Shizuku/rish for ADB-level diagnostics."
     exit 0
   fi
