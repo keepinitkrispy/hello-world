@@ -14,17 +14,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - depth: 10
+          - depth: 13
             prefix_mode: fixed
-          - depth: 11
+          - depth: 14
             prefix_mode: fixed
-          - depth: 12
+          - depth: 15
             prefix_mode: fixed
-          - depth: 10
+          - depth: 16
+            prefix_mode: fixed
+          - depth: 13
             prefix_mode: none
-          - depth: 11
+          - depth: 14
             prefix_mode: none
-          - depth: 12
+          - depth: 15
+            prefix_mode: none
+          - depth: 16
             prefix_mode: none
     runs-on: ubuntu-latest
     timeout-minutes: 4
