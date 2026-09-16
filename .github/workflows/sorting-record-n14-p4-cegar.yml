@@ -1,0 +1,45 @@
+name: n14 p4 CEGAR SAT Search
+
+on:
+  push:
+    branches:
+      - experiment/sorting-record-n14-p4-cegar-20260916
+
+permissions:
+  contents: read
+
+jobs:
+  sat:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {depth: 10, window: 6, solver: glucose4}
+          - {depth: 10, window: 8, solver: glucose4}
+          - {depth: 10, window: 10, solver: glucose4}
+          - {depth: 11, window: 6, solver: glucose4}
+          - {depth: 11, window: 8, solver: glucose4}
+          - {depth: 11, window: 10, solver: glucose4}
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SAT synthesizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/jarfo/sort.git /tmp/sort
+          python3 -m pip install -e /tmp/sort
+      - name: CEGAR synthesize p4 suffix under size 50
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/sort
+          prefix='[[(0,1),(2,3),(4,5),(6,7),(8,9),(10,11),(12,13)],[(0,2),(1,3),(4,8),(5,9),(10,12),(11,13)],[(0,4),(1,2),(3,7),(5,8),(6,10),(9,13),(11,12)],[(0,6),(1,5),(3,9),(4,10),(7,13),(8,12)]]'
+          echo "depth=${{ matrix.depth }} window=${{ matrix.window }} solver=${{ matrix.solver }}"
+          set +e
+          timeout 210s stdbuf -oL -eL python3 solver.py -n 14 -d "${{ matrix.depth }}" -s 50 --opt d --solver "${{ matrix.solver }}" --window "${{ matrix.window }}" --prefix "$prefix" 2>&1 | tee /tmp/sat.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "SAT_SEARCH_RC=$rc"
+          tail -n 220 /tmp/sat.log
