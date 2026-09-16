@@ -1,0 +1,73 @@
+name: n14 Sorting Record Search
+
+on:
+  push:
+    branches:
+      - experiment/sorting-record-n14-20260916
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - seed: 14001
+            escape: 50
+            mutations: 2
+          - seed: 14002
+            escape: 100
+            mutations: 2
+          - seed: 14003
+            escape: 250
+            mutations: 2
+          - seed: 14004
+            escape: 500
+            mutations: 3
+          - seed: 14005
+            escape: 1000
+            mutations: 3
+          - seed: 14006
+            escape: 2000
+            mutations: 4
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build upstream SorterHunter
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/bertdobbelaere/SorterHunter.git /tmp/SorterHunter
+          make -C /tmp/SorterHunter
+      - name: Search from current n14 incumbent
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/n14.conf <<'CFG'
+          Ninputs=14
+          Symmetric=0
+          RandomSeed=${{ matrix.seed }}
+          EscapeRate=${{ matrix.escape }}
+          ForceValidUphillStep=1
+          MaxMutations=${{ matrix.mutations }}
+          WeigthRemovePair=2
+          WeigthSwapPairs=1
+          WeigthReplacePair=1
+          WeightCrossPairs=1
+          WeightSwapIntersectingPairs=2
+          WeightReplaceHalfPair=2
+          PrefixType=0
+          InitialNetwork=(0,1),(2,3),(4,5),(6,7),(8,9),(10,11),(12,13),(0,2),(1,3),(4,8),(5,9),(10,12),(11,13),(0,4),(1,2),(3,7),(5,8),(6,10),(9,13),(11,12),(0,6),(1,5),(3,9),(4,10),(7,13),(8,12),(2,10),(3,11),(4,6),(7,9),(1,3),(2,8),(5,11),(6,7),(10,12),(1,4),(2,6),(3,5),(7,11),(8,10),(9,12),(2,4),(3,6),(5,8),(7,10),(9,11),(3,4),(5,6),(7,8),(9,10),(6,7)
+          Verbosity=2
+          CFG
+          echo "seed=${{ matrix.seed }} escape=${{ matrix.escape }} mutations=${{ matrix.mutations }}"
+          set +e
+          timeout 150s stdbuf -oL -eL /tmp/SorterHunter/SorterHunter /tmp/n14.conf 2>&1 | tee /tmp/search.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "SORTERHUNTER_RC=$rc"
+          echo '--- candidate improvements ---'
+          grep -Ei 'size|pairs|network|improv|hull|sorter' /tmp/search.log | tail -n 120 || true
