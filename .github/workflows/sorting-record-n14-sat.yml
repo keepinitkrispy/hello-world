@@ -1,0 +1,56 @@
+name: n14 SAT Sorting Record Search
+
+on:
+  push:
+    branches:
+      - experiment/sorting-record-n14-sat-20260916
+
+permissions:
+  contents: read
+
+jobs:
+  sat:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - depth: 10
+            prefix_mode: fixed
+          - depth: 11
+            prefix_mode: fixed
+          - depth: 12
+            prefix_mode: fixed
+          - depth: 10
+            prefix_mode: none
+          - depth: 11
+            prefix_mode: none
+          - depth: 12
+            prefix_mode: none
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SAT synthesizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/jarfo/sort.git /tmp/sort
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -e /tmp/sort
+      - name: Solve n14 size-50 instance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/sort
+          echo "depth=${{ matrix.depth }} prefix=${{ matrix.prefix_mode }}"
+          args=(-n 14 -d "${{ matrix.depth }}" -s 50 --opt d)
+          if [ "${{ matrix.prefix_mode }}" = none ]; then
+            args+=(--prefix '[]')
+          fi
+          set +e
+          timeout 150s stdbuf -oL -eL python3 solver.py "${args[@]}" 2>&1 | tee /tmp/sat.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "SAT_SEARCH_RC=$rc"
+          echo '--- final output ---'
+          tail -n 160 /tmp/sat.log
